@@ -10,6 +10,7 @@ from job_assistant.ui.widgets import Card, action_button, page_header, section_l
 
 class SettingsPage(QWidget):
     theme_changed = Signal(str)
+    settings_saved = Signal()
 
     def __init__(self, repository: Repository, paths: AppPaths, parent=None):
         super().__init__(parent)
@@ -42,7 +43,14 @@ class SettingsPage(QWidget):
         form.addRow("Window", self.minimized)
         self.search_on_startup = QCheckBox("Run a search when the application starts")
         form.addRow("Search", self.search_on_startup)
+        self.auto_apply = QCheckBox("Auto Apply (disabled by default)")
+        self.auto_apply.setToolTip("Automatic submission is only permitted for approved flows with truthful answers and no CAPTCHA or security-control bypass.")
+        form.addRow("Applications", self.auto_apply)
         general_layout.addLayout(form)
+        apply_note = QLabel("The assistant prepares documents and opens permitted job pages or email compose windows. It does not submit applications automatically in this build.")
+        apply_note.setObjectName("warning")
+        apply_note.setWordWrap(True)
+        general_layout.addWidget(apply_note)
         note = QLabel("Startup integration is intentionally stored as a preference in Phase 1; Task Scheduler registration is added in the Windows automation phase.")
         note.setObjectName("muted")
         note.setWordWrap(True)
@@ -81,13 +89,16 @@ class SettingsPage(QWidget):
         self.startup.setChecked(bool(settings.get("start_with_windows", False)))
         self.minimized.setChecked(bool(settings.get("start_minimized", True)))
         self.search_on_startup.setChecked(bool(settings.get("search_on_startup", True)))
+        self.auto_apply.setChecked(bool(settings.get("auto_apply", False)))
 
     def save_settings(self) -> None:
         self.repository.set_setting("appearance", self.appearance.currentText())
         self.repository.set_setting("start_with_windows", self.startup.isChecked())
         self.repository.set_setting("start_minimized", self.minimized.isChecked())
         self.repository.set_setting("search_on_startup", self.search_on_startup.isChecked())
+        self.repository.set_setting("auto_apply", self.auto_apply.isChecked())
         self.theme_changed.emit(self.appearance.currentText())
+        self.settings_saved.emit()
         QMessageBox.information(self, "Settings saved", "Settings have been saved to your local database.")
 
     def restore_defaults(self) -> None:
@@ -95,3 +106,4 @@ class SettingsPage(QWidget):
         self.startup.setChecked(False)
         self.minimized.setChecked(True)
         self.search_on_startup.setChecked(True)
+        self.auto_apply.setChecked(False)

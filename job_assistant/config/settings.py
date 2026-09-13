@@ -42,6 +42,7 @@ DEFAULT_SETTINGS = {
     "start_with_windows": False,
     "start_minimized": True,
     "search_on_startup": True,
+    "auto_apply": False,
     "search_frequency": DEFAULT_SEARCH_FREQUENCY,
     "auto_prepare_threshold": 75,
     "priority_threshold": 85,
@@ -52,6 +53,7 @@ DEFAULT_SETTINGS = {
     "salary_min": "",
     "salary_max": "",
     "currency": "USD",
+    "feed_urls": [],
     "target_titles": [],
 }
 

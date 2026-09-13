@@ -18,9 +18,31 @@ def connect(database_path: str | Path) -> sqlite3.Connection:
     return connection
 
 
+def _add_missing_columns(connection: sqlite3.Connection) -> None:
+    """Apply additive migrations for databases created by an earlier phase."""
+    columns = {
+        "jobs": {
+            "application_email": "TEXT NOT NULL DEFAULT ''",
+            "application_method": "TEXT NOT NULL DEFAULT 'website'",
+            "application_instructions": "TEXT NOT NULL DEFAULT ''",
+        },
+        "applications": {
+            "cv_path": "TEXT NOT NULL DEFAULT ''",
+            "cover_letter_path": "TEXT NOT NULL DEFAULT ''",
+            "needs_attention": "INTEGER NOT NULL DEFAULT 0",
+        },
+    }
+    for table, additions in columns.items():
+        existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, definition in additions.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
 def initialize_database(database_path: str | Path) -> None:
     with connect(database_path) as connection:
         connection.executescript(SCHEMA_SQL)
+        _add_missing_columns(connection)
         connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

@@ -8,10 +8,10 @@ PySide6 UI
    ▼
 Application services
    ├── CV/profile service        (local files + extraction)
-   ├── Search orchestrator       (future, rate-limited)
-   ├── Matching engine           (future, explainable 0–100 score)
-   ├── Document generators       (future, factual only)
-   └── Application engine        (future, approval-first)
+   ├── Search orchestrator       (configured RSS/XML/JSON feeds)
+   ├── Matching engine           (explainable 0–100 baseline; semantic provider later)
+   ├── Document generators       (truthful DOCX/PDF output)
+   └── Application engine        (approval-first queue + email compose helper)
    │
    ▼
 Repository / SQLite adapter

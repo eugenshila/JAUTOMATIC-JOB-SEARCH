@@ -11,6 +11,7 @@ from typing import Any
 
 from job_assistant.config.settings import DEFAULT_SETTINGS, DEFAULT_SOURCES
 from job_assistant.database.connection import connect, initialize_database
+from job_assistant.job_sources.base import JobRecord
 from job_assistant.models.entities import CandidateProfile
 
 
@@ -196,6 +197,111 @@ class Repository:
                 [(name,) for name in names],
             )
             db.commit()
+
+    def upsert_job(self, record: JobRecord) -> tuple[int, bool]:
+        """Insert a job once, using URL/source ID and then human-readable fields for dedupe."""
+        with self._connection() as db:
+            source = db.execute("SELECT id FROM job_sources WHERE name=?", (record.source_name,)).fetchone()
+            if source is None:
+                source_id = int(db.execute(
+                    "INSERT INTO job_sources(name, connector_type) VALUES(?, 'public_feed')",
+                    (record.source_name,),
+                ).lastrowid)
+            else:
+                source_id = int(source["id"])
+            row = None
+            if record.job_url:
+                row = db.execute("SELECT id FROM jobs WHERE job_url=?", (record.job_url,)).fetchone()
+            if row is None and record.external_id:
+                row = db.execute(
+                    "SELECT id FROM jobs WHERE source_id=? AND external_id=?", (source_id, record.external_id)
+                ).fetchone()
+            if row is None and record.company and record.title:
+                row = db.execute(
+                    """SELECT id FROM jobs WHERE lower(company)=lower(?) AND lower(title)=lower(?)
+                    AND lower(location)=lower(?)""", (record.company, record.title, record.location)
+                ).fetchone()
+            values = (
+                source_id, record.external_id or None, record.title, record.company, record.location, record.country,
+                record.description, record.job_url, record.application_email, record.application_method,
+                record.application_instructions, record.salary_min, record.salary_max, record.salary_currency,
+                record.job_type, record.workplace_type, record.posted_at or None, record.closing_at or None,
+                _json(record.raw_data), hashlib.sha256(record.description.encode("utf-8")).hexdigest(),
+            )
+            if row is not None:
+                db.execute(
+                    """UPDATE jobs SET source_id=?, external_id=?, title=?, company=?, location=?, country=?,
+                    description=?, job_url=?, application_email=?, application_method=?, application_instructions=?,
+                    salary_min=?, salary_max=?, salary_currency=?, job_type=?, workplace_type=?, posted_at=?,
+                    closing_at=?, raw_data_json=?, content_hash=? WHERE id=?""", values + (int(row["id"]),)
+                )
+                db.commit()
+                return int(row["id"]), False
+            cursor = db.execute(
+                """INSERT INTO jobs(source_id, external_id, title, company, location, country, description,
+                job_url, application_email, application_method, application_instructions, salary_min, salary_max,
+                salary_currency, job_type, workplace_type, posted_at, closing_at, raw_data_json, content_hash)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", values
+            )
+            db.commit()
+            return int(cursor.lastrowid), True
+
+    def save_job_match(self, job_id: int, score: float, category: str, *, matched: list[str], missing: list[str], preferred: list[str], reasons: list[str], recommendation: str) -> None:
+        with self._connection() as db:
+            db.execute(
+                """INSERT INTO job_matches(job_id, profile_id, score, category, matched_skills_json,
+                missing_skills_json, preferred_skills_json, reasons_json, recommendation, calculated_at)
+                VALUES(?, (SELECT id FROM candidate_profiles WHERE user_id=?), ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(job_id, profile_id) DO UPDATE SET score=excluded.score, category=excluded.category,
+                matched_skills_json=excluded.matched_skills_json, missing_skills_json=excluded.missing_skills_json,
+                preferred_skills_json=excluded.preferred_skills_json, reasons_json=excluded.reasons_json,
+                recommendation=excluded.recommendation, calculated_at=CURRENT_TIMESTAMP""",
+                (job_id, self.user_id, float(max(0, min(100, score))), category, _json(matched), _json(missing),
+                 _json(preferred), _json(reasons), recommendation),
+            )
+            db.commit()
+
+    def get_job(self, job_id: int) -> sqlite3.Row | None:
+        with self._connection() as db:
+            return db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+
+    def ensure_application(self, job_id: int, match_score: float, *, status: str = "Waiting Approval") -> int:
+        with self._connection() as db:
+            row = db.execute("SELECT id FROM applications WHERE job_id=?", (job_id,)).fetchone()
+            if row:
+                db.execute(
+                    "UPDATE applications SET match_score=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (match_score, row["id"]),
+                )
+                db.commit()
+                return int(row["id"])
+            cursor = db.execute(
+                """INSERT INTO applications(job_id, profile_id, application_id, status, match_score, closing_date)
+                VALUES(?, (SELECT id FROM candidate_profiles WHERE user_id=?), ?, ?, ?,
+                (SELECT closing_at FROM jobs WHERE id=?))""",
+                (job_id, self.user_id, self.new_application_id(), status, match_score, job_id),
+            )
+            db.commit()
+            return int(cursor.lastrowid)
+
+    def save_application_documents(self, application_id: int, *, cv_path: str, cover_letter_path: str, needs_attention: bool = False) -> None:
+        with self._connection() as db:
+            db.execute(
+                """UPDATE applications SET cv_path=?, cover_letter_path=?, needs_attention=?,
+                status='Documents Prepared', updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (cv_path, cover_letter_path, int(needs_attention), application_id),
+            )
+            db.commit()
+
+    def list_applications(self) -> list[sqlite3.Row]:
+        with self._connection() as db:
+            return db.execute(
+                """SELECT a.*, j.title AS job_title, j.company, j.location, j.job_url,
+                j.application_email, j.application_method, j.description, j.source_id
+                FROM applications a JOIN jobs j ON j.id=a.job_id
+                WHERE a.profile_id=(SELECT id FROM candidate_profiles WHERE user_id=?)
+                ORDER BY a.updated_at DESC""", (self.user_id,)
+            ).fetchall()
 
     @staticmethod
     def new_application_id() -> str:

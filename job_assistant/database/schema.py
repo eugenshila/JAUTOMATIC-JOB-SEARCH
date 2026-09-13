@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     country TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     job_url TEXT NOT NULL DEFAULT '',
+    application_email TEXT NOT NULL DEFAULT '',
+    application_method TEXT NOT NULL DEFAULT 'website',
+    application_instructions TEXT NOT NULL DEFAULT '',
     salary_min REAL,
     salary_max REAL,
     salary_currency TEXT NOT NULL DEFAULT '',
@@ -127,6 +130,9 @@ CREATE TABLE IF NOT EXISTS applications (
     recruiter_id INTEGER,
     interview_date TEXT,
     follow_up_date TEXT,
+    cv_path TEXT NOT NULL DEFAULT '',
+    cover_letter_path TEXT NOT NULL DEFAULT '',
+    needs_attention INTEGER NOT NULL DEFAULT 0 CHECK (needs_attention IN (0, 1)),
     notes TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -192,4 +198,4 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 '''
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"

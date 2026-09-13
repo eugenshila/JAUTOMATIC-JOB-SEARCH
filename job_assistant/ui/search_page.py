@@ -10,6 +10,7 @@ from job_assistant.ui.widgets import Card, action_button, page_header, section_l
 
 class SearchPage(QWidget):
     search_now = Signal()
+    saved = Signal()
 
     def __init__(self, repository: Repository, parent=None):
         super().__init__(parent)
@@ -88,6 +89,16 @@ class SearchPage(QWidget):
         salary_row.addWidget(self.currency)
         layout.addLayout(salary_row)
 
+        layout.addWidget(QLabel("Approved public RSS/XML or JSON feed URLs (one per line)"))
+        self.feed_urls = QPlainTextEdit()
+        self.feed_urls.setPlaceholderText("https://example.org/approved-jobs-feed.xml")
+        self.feed_urls.setMaximumHeight(80)
+        layout.addWidget(self.feed_urls)
+        feed_note = QLabel("Only use official APIs, feeds, or public sources that permit automated access. No login, CAPTCHA, or anti-bot controls are bypassed.")
+        feed_note.setObjectName("muted")
+        feed_note.setWordWrap(True)
+        layout.addWidget(feed_note)
+
         layout.addWidget(QLabel("Target and transferable job titles (one per line; leave empty to derive from the profile)"))
         self.target_titles = QPlainTextEdit()
         self.target_titles.setPlaceholderText("Supply Chain Analyst\nOperations Coordinator\nInventory Controller")
@@ -121,6 +132,7 @@ class SearchPage(QWidget):
         self.salary_min.setPlainText(str(settings.get("salary_min", "")))
         self.salary_max.setPlainText(str(settings.get("salary_max", "")))
         self.currency.setCurrentText(settings.get("currency", "USD"))
+        self.feed_urls.setPlainText("\n".join(settings.get("feed_urls", [])))
         self.target_titles.setPlainText("\n".join(settings.get("target_titles", [])))
 
     @staticmethod
@@ -144,6 +156,7 @@ class SearchPage(QWidget):
             "salary_min": self.salary_min.toPlainText().strip(),
             "salary_max": self.salary_max.toPlainText().strip(),
             "currency": self.currency.currentText(),
+            "feed_urls": [line.strip() for line in self.feed_urls.toPlainText().splitlines() if line.strip()],
             "target_titles": [line.strip() for line in self.target_titles.toPlainText().splitlines() if line.strip()],
         }
 
@@ -152,6 +165,7 @@ class SearchPage(QWidget):
         for key, value in config.items():
             self.repository.set_setting(key, value)
         self.status.setText("Search configuration saved locally.")
+        self.saved.emit()
 
     def _search(self) -> None:
         self.save_settings()

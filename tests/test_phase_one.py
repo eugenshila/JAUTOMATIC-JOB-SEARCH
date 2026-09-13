@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 
 from job_assistant.database.repository import Repository
+from job_assistant.job_sources import JobRecord
 from job_assistant.models.entities import CandidateProfile
+from job_assistant.services.matching import match_job
 from job_assistant.services.profile_service import form_from_profile, profile_from_form
 
 
@@ -68,6 +70,28 @@ class PhaseOneRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(first)
         self.assertEqual(first, second)
         self.assertEqual(self.repository.latest_master_cv()["file_name"], "master.doc")
+
+    def test_job_dedupe_and_explainable_match(self) -> None:
+        profile = CandidateProfile(
+            full_name="Candidate", job_titles=["Supply Chain Analyst"],
+            technical_skills=["SQL", "Power BI"], industry_experience=["supply chain"],
+            preferred_locations=["Nairobi"],
+        )
+        self.repository.save_profile(profile)
+        job = JobRecord(
+            title="Supply Chain Analyst", company="Example Co", location="Nairobi",
+            description="SQL and Power BI are used in our supply chain team.",
+            job_url="https://example.test/jobs/1",
+        )
+        job_id, is_new = self.repository.upsert_job(job)
+        same_id, same_is_new = self.repository.upsert_job(job)
+        analysis = match_job(profile, job)
+        self.assertTrue(is_new)
+        self.assertFalse(same_is_new)
+        self.assertEqual(job_id, same_id)
+        self.assertGreaterEqual(analysis["score"], 80)
+        self.assertIn("SQL", analysis["matched"])
+        self.assertTrue(analysis["reasons"])
 
 
 if __name__ == "__main__":

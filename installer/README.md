@@ -1,12 +1,27 @@
-# Windows installer placeholder
+# Windows MSI installer
 
-The installer is intentionally deferred until Phase 12. The planned build is:
+The repository includes a reproducible MSI build. An MSI binary is not checked into Git because it is a generated Windows artifact and cannot be produced in this Linux development sandbox.
 
-1. Build and test the PyInstaller executable.
-2. Package it with Inno Setup or WiX.
-3. Create shortcuts and the uninstall entry.
-4. Create the local data directory without overwriting a user's Master CV.
-5. Register Windows Task Scheduler only when the user explicitly opts in.
-6. Sign release artifacts before distribution.
+## Build on Windows
 
-No installer script is included in Phase 1 because packaging a partially implemented application would make the startup and update behavior misleading.
+Install:
+
+- Python 3.11+
+- WiX Toolset 3 (`choco install wixtoolset -y` from an elevated PowerShell)
+
+Then from the repository root:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\installer\build-msi.ps1
+```
+
+The output is:
+
+```text
+dist\AI Job Application Assistant.msi
+```
+
+The installer creates Start Menu and optional desktop shortcuts, installs the PyInstaller bundle, and leaves the user's `%LOCALAPPDATA%\AI Job Application Assistant` data untouched during upgrades. Windows Task Scheduler registration remains an explicit in-app preference and is not silently enabled by the MSI.
+
+The MSI does not automatically submit job applications. It installs the approval-first application assistant.

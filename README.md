@@ -1,19 +1,31 @@
 # AI Job Application Assistant
 
-A privacy-first Windows desktop application for finding and prioritising suitable jobs, comparing them against a factual candidate profile, and preparing applications for review. The repository currently implements **Phase 1** of the staged build: local database, desktop shell, dashboard, settings, Master CV upload, structured candidate profile, and job-search configuration.
+A privacy-first Windows desktop application for finding and prioritising suitable jobs, comparing them against a factual candidate profile, preparing tailored application documents, and assisting with the final application step. The repository currently contains the Phase 1 foundation plus a first working permitted-feed workflow.
 
-> **Important:** job-site connectors, AI matching, document generation, browser-assisted applications, Windows Task Scheduler registration, email monitoring, and the installer are deliberately not enabled yet. The application does not submit applications in Phase 1.
+> **Safety boundary:** this build prepares documents and opens an official job page or the user's default email compose application. It does not silently submit applications, bypass CAPTCHAs, defeat anti-bot controls, guess sensitive answers, or send email without the user's action.
 
-## Phase 1 features
+## Current capabilities
 
 - PySide6 Windows desktop shell with dark/light themes and navigation for every planned module.
-- Local SQLite database bootstrapped on first launch.
+- Local SQLite database bootstrapped on first launch, including jobs, match explanations, applications, documents, and search history.
 - Structured candidate profile with contact details, experience, education, qualifications, certifications, skills, industries, management experience, achievements, titles, years, locations, languages, and relocation preference.
 - Master CV upload for PDF, DOCX, and DOC. Every upload is copied to a timestamped file; the original Master CV is never overwritten.
 - Conservative contact prefill from extracted CV text. The user must review and save the profile; no facts are invented.
-- Configurable target locations, job types, approved source categories, salary preferences, search frequency, target titles, and application thresholds.
-- Dashboard counters ready for jobs, matches, applications, interviews, offers, and outcomes.
+- Search configuration for locations, job types, salary preferences, target titles, thresholds, and user-approved RSS/XML or JSON feed URLs.
+- Automatic search on startup and at the selected interval while the assistant is running, plus a manual Search Jobs Now button.
+- Generic public-feed connector that uses only permitted feeds/APIs supplied by the user; no HTML scraping or login automation.
+- Duplicate job protection using URL, source ID, company, title, and location.
+- Explainable baseline match scoring with matched skills, missing mandatory evidence, preferred gaps, category, reasons, and recommendation.
+- Automatic local preparation of truthful ATS-oriented CVs and cover letters in DOCX and PDF when the configured match threshold is reached.
+- Application queue with generated-document folder access, official job-page opening, and an **Open email application** action for vacancies that expose an application email address. The email action opens a compose window and never sends the message.
 - Privacy-conscious local logging and an ignored local-data directory.
+
+## What is not automated yet
+
+- LinkedIn, Indeed, Glassdoor, BrighterMonday, Fuzu, Bayt, and similar sources need an official API/feed connector or a user-approved public feed URL. The generic connector does not scrape those websites.
+- The current matching engine is deterministic and explainable. A configurable semantic AI provider is still a future enhancement.
+- Browser application submission and Windows Task Scheduler startup are not enabled. **Auto Apply remains disabled by default**, and the queue remains approval-first.
+- Email attachments cannot be reliably inserted through a cross-client `mailto:` link, so the generated document folder is opened for the user to attach the CV and cover letter before sending.
 
 ## Architecture
 
@@ -25,12 +37,12 @@ job_assistant/
   config/                        paths and safe defaults
   database/                      SQLite connection, schema, repository
   models/                        typed domain value objects
-  services/                      CV and profile orchestration
-  ai/                            future provider adapters and matching engine
+  services/                      search, matching, CV, profile, documents, email
+  ai/                            future provider adapters and semantic matching
   job_sources/                   one connector per permitted source/feed
-  cv_generator/                  future truthful ATS CV generation
-  cover_letter_generator/        future cover-letter generation
-  application_engine/            future queue and duplicate protection
+  cv_generator/                  future template-specific CV generation
+  cover_letter_generator/        future provider/template adapters
+  application_engine/            future permitted browser submission and approvals
   browser/                       future permitted browser-assisted flows
   notifications/                 future tray and search-complete notifications
   scheduler/                     future Windows Task Scheduler integration
@@ -62,7 +74,7 @@ The UI depends on the repository rather than SQL. The repository is the seam for
 | `settings` | JSON-valued local preferences |
 | `schema_meta` | Schema version for migrations |
 
-The schema already models the later phases, while Phase 1 only writes the profile, CV, settings, and search-history foundations.
+The schema already models the later phases. The working feed workflow also writes normalised jobs, match explanations, prepared application records, and document paths.
 
 ## Local Windows setup
 
@@ -111,21 +123,30 @@ The first launch creates the database and local files under:
   Logs\
 ```
 
-No API key is required for Phase 1. Do not put secrets in the SQLite database, source tree, or log files.
+No API key is required when using a public feed URL. Do not put secrets in the SQLite database, source tree, or log files.
+
+## Build the MSI on Windows
+
+The MSI source and build script are in `installer/`. An MSI binary is not checked into Git because it is a generated Windows artifact and this development sandbox is Linux-based.
+
+```powershell
+# Install WiX Toolset 3 from an elevated PowerShell once
+choco install wixtoolset -y
+
+# From the repository root, after activating the virtual environment
+.\installer\build-msi.ps1
+```
+
+The generated file is `dist\AI Job Application Assistant.msi`. A manual GitHub Actions workflow is also included under `.github/workflows/windows-installer.yml` to build and upload the MSI on a Windows runner.
 
 ## Development phases
 
 1. **Phase 1 — current:** Windows interface, SQLite schema, settings, Master CV upload, candidate profile, and search configuration.
-2. Phase 2 — CV parsing and profile extraction improvements.
-3. Phase 3 — permitted job-source connectors and normalisation.
-4. Phase 4 — transparent semantic matching and skill-gap analysis.
-5. Phase 5 — truthful ATS CV generator (DOCX/PDF).
-6. Phase 6 — tailored cover-letter generator.
-7. Phase 7 — application approval queue and duplicate protection.
-8. Phase 8 — permitted browser-assisted applications; human attention for CAPTCHAs.
-9. Phase 9 — application tracking and dashboard analytics.
-10. Phase 10 — optional email/recruiter tracking with explicit authorization.
-11. Phase 11 — Windows startup/tray and scheduled searches.
-12. Phase 12 — signed PyInstaller + Inno Setup/WiX installer.
+2. **Working MVP additions:** permitted RSS/XML/JSON feed retrieval, duplicate protection, explainable baseline matching, DOCX/PDF CV and cover-letter generation, approval queue, and email compose helper.
+3. Semantic AI matching, richer CV parsing, and provider-specific job connectors.
+4. Template-specific ATS CV styles and richer cover-letter controls.
+5. Permitted browser-assisted applications; human attention for CAPTCHAs and sensitive questions.
+6. Application tracking, interviews, recruiter/email monitoring, and analytics.
+7. Windows system tray, Task Scheduler registration, backups, Credential Manager integration, signing, and release packaging.
 
 Each phase should add tests before enabling the next integration boundary.
