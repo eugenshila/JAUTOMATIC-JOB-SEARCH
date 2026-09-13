@@ -24,7 +24,6 @@ python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --distpath $buildRoot `
   --workpath (Join-Path $buildRoot "pyinstaller") `
   --specpath $buildRoot `
-  --collect-all PySide6 `
   --collect-all reportlab `
   job_assistant\app.py
 $pyInstallerExit = $LASTEXITCODE
