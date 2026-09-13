@@ -11,9 +11,14 @@ $artifactDir = Join-Path $repo "dist"
 Remove-Item $buildRoot -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $publishDir, $wixDir, $artifactDir -ItemType Directory -Force | Out-Null
 
+Write-Host "Installing Python dependencies..."
 python -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 python -m pip install -e .
+if ($LASTEXITCODE -ne 0) { throw "Application dependency installation failed." }
 python -m pip install "PyInstaller>=6,<7"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed." }
+Write-Host "Starting PyInstaller..."
 python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --name "AI Job Application Assistant" `
   --distpath $buildRoot `
@@ -22,7 +27,9 @@ python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --collect-all PySide6 `
   --collect-all reportlab `
   job_assistant\app.py
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
+$pyInstallerExit = $LASTEXITCODE
+Write-Host "PyInstaller exit code: $pyInstallerExit"
+if ($pyInstallerExit -ne 0) { throw "PyInstaller failed." }
 
 $appDir = Join-Path $buildRoot "AI Job Application Assistant"
 if (-not (Test-Path (Join-Path $appDir "AI Job Application Assistant.exe"))) {
