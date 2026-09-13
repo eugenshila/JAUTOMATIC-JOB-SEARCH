@@ -20,8 +20,13 @@ jobs:
         run: choco install wixtoolset --version=3.14.1.20250415 -y --no-progress
       - name: Build MSI
         shell: powershell
-        run: .\installer\build-msi.ps1
+        run: |
+          .\installer\build-msi.ps1 *>&1 | Tee-Object build-msi.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: ai-job-application-assistant-msi
-          path: dist/*.msi
+          name: ai-job-application-assistant-build-output
+          path: |
+            dist/*.msi
+            build-msi.log

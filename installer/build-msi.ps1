@@ -22,9 +22,16 @@ python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --collect-all PySide6 `
   --collect-all reportlab `
   job_assistant\app.py
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
 $appDir = Join-Path $buildRoot "AI Job Application Assistant"
+if (-not (Test-Path (Join-Path $appDir "AI Job Application Assistant.exe"))) {
+  throw "PyInstaller did not produce the application executable at $appDir."
+}
 Copy-Item (Join-Path $appDir "*") $publishDir -Recurse -Force
+if (-not (Test-Path (Join-Path $publishDir "AI Job Application Assistant.exe"))) {
+  throw "The PyInstaller output could not be copied to the publish directory."
+}
 $candle = (Get-Command candle.exe -ErrorAction SilentlyContinue).Source
 $light = (Get-Command light.exe -ErrorAction SilentlyContinue).Source
 $heat = (Get-Command heat.exe -ErrorAction SilentlyContinue).Source
@@ -39,12 +46,13 @@ if ($LASTEXITCODE -ne 0) { throw "WiX heat failed." }
 
 & $candle -nologo -dPublishDir=$publishDir `
   -out (Join-Path $wixDir "Product.wixobj") (Join-Path $PSScriptRoot "Product.wxs")
+if ($LASTEXITCODE -ne 0) { throw "WiX candle failed for Product.wxs." }
 & $candle -nologo -dPublishDir=$publishDir `
   -out (Join-Path $wixDir "harvested.wixobj") (Join-Path $wixDir "harvested.wxs")
-if ($LASTEXITCODE -ne 0) { throw "WiX candle failed." }
+if ($LASTEXITCODE -ne 0) { throw "WiX candle failed for harvested.wxs." }
 
 $msi = Join-Path $artifactDir "AI Job Application Assistant.msi"
-& $light -nologo -ext WixUIExtension -out $msi `
+& $light -nologo -out $msi `
   (Join-Path $wixDir "Product.wixobj") (Join-Path $wixDir "harvested.wixobj")
 if ($LASTEXITCODE -ne 0) { throw "WiX light failed." }
 Write-Host "Created $msi" -ForegroundColor Green
