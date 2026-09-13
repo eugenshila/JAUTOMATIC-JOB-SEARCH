@@ -35,13 +35,13 @@ if (-not (Test-Path (Join-Path $publishDir "AI Job Application Assistant.exe")))
 # Chocolatey installs WiX after this PowerShell process starts, so refresh PATH
 # from the common WiX 3.14 locations before resolving the three tools.
 $wixBinCandidates = @(
-  (Join-Path ${env:ProgramFiles(x86)} "WiX Toolset v3.14\bin"),
-  (Join-Path $env:ProgramFiles "WiX Toolset v3.14\bin")
+  "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin",
+  "$env:ProgramFiles\WiX Toolset v3.14\bin"
 )
-if ($env:WIX) { $wixBinCandidates += (Join-Path $env:WIX "bin") }
-$wixBinCandidates = $wixBinCandidates | Where-Object { $_ -and (Test-Path $_) }
-if ($wixBinCandidates.Count -gt 0) {
-  $env:Path = "$($wixBinCandidates[0]);$env:Path"
+if ($env:WIX) { $wixBinCandidates += "$env:WIX\bin" }
+$wixBin = @($wixBinCandidates | Where-Object { Test-Path (Join-Path $_ "candle.exe") } | Select-Object -First 1)
+if ($wixBin.Count -gt 0) {
+  $env:Path = "$($wixBin[0]);$env:Path"
 }
 $candle = (Get-Command candle.exe -ErrorAction SilentlyContinue).Source
 $light = (Get-Command light.exe -ErrorAction SilentlyContinue).Source
