@@ -19,14 +19,18 @@ if ($LASTEXITCODE -ne 0) { throw "Application dependency installation failed." }
 python -m pip install "PyInstaller>=6,<7"
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed." }
 Write-Host "Starting PyInstaller..."
+# PyInstaller writes progress and warnings to stderr. Redirect that stream so
+# PowerShell's strict error policy does not stop before we can inspect its exit code.
+$ErrorActionPreference = "Continue"
 python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --name "AI Job Application Assistant" `
   --distpath $buildRoot `
   --workpath (Join-Path $buildRoot "pyinstaller") `
   --specpath $buildRoot `
   --collect-all reportlab `
-  job_assistant\app.py
+  job_assistant\app.py 2>&1
 $pyInstallerExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
 Write-Host "PyInstaller exit code: $pyInstallerExit"
 if ($pyInstallerExit -ne 0) { throw "PyInstaller failed." }
 
