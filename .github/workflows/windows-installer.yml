@@ -17,7 +17,7 @@ jobs:
           python-version: '3.11'
       - name: Install WiX Toolset
         shell: powershell
-        run: choco install wixtoolset --version=3.14.1 -y --no-progress
+        run: choco install wixtoolset --version=3.14.1.20250415 -y --no-progress
       - name: Build MSI
         shell: powershell
         run: .\installer\build-msi.ps1
