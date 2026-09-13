@@ -23,6 +23,14 @@ jobs:
         run: |
           .\installer\build-msi.ps1 *>&1 | Tee-Object build-msi.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Expose MSI build diagnostics
+        if: failure()
+        shell: powershell
+        run: |
+          if (Test-Path build-msi.log) {
+            $diagnostic = (Get-Content build-msi.log -Raw).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error file=installer/build-msi.ps1,line=1::${diagnostic}"
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
