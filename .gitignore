@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Local application data (CVs and SQLite database can contain sensitive data)
+.data/
+JobAssistantData/
+*.sqlite3
+*.db
+
+# Build output
+build/
+dist/
+installer/output/
+
+# IDE
+.vscode/
+.idea/
