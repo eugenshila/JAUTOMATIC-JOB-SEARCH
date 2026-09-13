@@ -60,12 +60,19 @@ if (-not ($candle -and $light -and $heat)) {
   throw "WiX Toolset 3.14 was not found. Install WiX 3.14.1 from the official WiX release page or run: choco install wixtoolset --version=3.14.1 -y, then reopen PowerShell."
 }
 
+$harvestedPath = Join-Path $wixDir "harvested.wxs"
 & $heat dir $publishDir `
   -cg AppFiles -dr INSTALLFOLDER -var var.PublishDir -gg -srd -sreg `
-  -out (Join-Path $wixDir "harvested.wxs")
+  -out $harvestedPath
 if ($LASTEXITCODE -ne 0) { throw "WiX heat failed." }
+# Heat can preserve the PowerShell variable spelling in Source attributes when
+# invoked through a script. Resolve every supported spelling before candle binds files.
+$harvested = [System.IO.File]::ReadAllText($harvestedPath)
+$harvested = $harvested.Replace("`$(var.PublishDir)", $publishDir).Replace("`$(var.publishDir)", $publishDir).Replace("`$publishDir", $publishDir)
+[System.IO.File]::WriteAllText($harvestedPath, $harvested, [System.Text.UTF8Encoding]::new($false))
 
-& $candle -nologo -dPublishDir=$publishDir `
+$publishDefine = "-dPublishDir=$publishDir"
+& $candle -nologo $publishDefine `
   -out (Join-Path $wixDir "Product.wixobj") (Join-Path $PSScriptRoot "Product.wxs")
 if ($LASTEXITCODE -ne 0) { throw "WiX candle failed for Product.wxs." }
 & $candle -nologo -dPublishDir=$publishDir `
