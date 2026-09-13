@@ -29,7 +29,7 @@ $candle = (Get-Command candle.exe -ErrorAction SilentlyContinue).Source
 $light = (Get-Command light.exe -ErrorAction SilentlyContinue).Source
 $heat = (Get-Command heat.exe -ErrorAction SilentlyContinue).Source
 if (-not ($candle -and $light -and $heat)) {
-  throw "WiX Toolset 3 was not found. Install it with: choco install wixtoolset -y, then reopen PowerShell."
+  throw "WiX Toolset 3.14 was not found. Install WiX 3.14.1 from the official WiX release page or run: choco install wixtoolset --version=3.14.1 -y, then reopen PowerShell."
 }
 
 & $heat dir $publishDir `

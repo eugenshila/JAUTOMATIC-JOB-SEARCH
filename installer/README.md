@@ -7,7 +7,7 @@ The repository includes a reproducible MSI build. An MSI binary is not checked i
 Install:
 
 - Python 3.11+
-- WiX Toolset 3 (`choco install wixtoolset -y` from an elevated PowerShell)
+- WiX Toolset 3.14 (`choco install wixtoolset --version=3.14.1 -y` from an elevated PowerShell)
 
 Then from the repository root:
 
