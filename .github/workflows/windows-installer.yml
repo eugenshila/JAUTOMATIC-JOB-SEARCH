@@ -1,0 +1,41 @@
+name: Build Windows MSI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install WiX Toolset
+        shell: powershell
+        run: choco install wixtoolset --version=3.14.1.20250415 -y --no-progress
+      - name: Build MSI
+        shell: powershell
+        run: |
+          .\installer\build-msi.ps1 *>&1 | Tee-Object build-msi.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Expose MSI build diagnostics
+        if: failure()
+        shell: powershell
+        run: |
+          if (Test-Path build-msi.log) {
+            $diagnostic = ((Get-Content build-msi.log | Select-Object -Last 20) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error file=installer/build-msi.ps1,line=1::${diagnostic}"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value (Get-Content build-msi.log | Select-Object -Last 120)
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-job-application-assistant-build-output
+          path: |
+            dist/*.msi
+            build-msi.log

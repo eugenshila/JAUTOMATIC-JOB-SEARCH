@@ -1,0 +1,86 @@
+# Build a Windows MSI using PyInstaller and WiX Toolset 3.
+# Run from the repository root in Windows PowerShell.
+$ErrorActionPreference = "Stop"
+$repo = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
+Set-Location $repo
+$buildRoot = Join-Path $repo "build\windows"
+$publishDir = Join-Path $buildRoot "publish"
+$wixDir = Join-Path $buildRoot "wix"
+$artifactDir = Join-Path $repo "dist"
+
+Remove-Item $buildRoot -Recurse -Force -ErrorAction SilentlyContinue
+New-Item $publishDir, $wixDir, $artifactDir -ItemType Directory -Force | Out-Null
+
+Write-Host "Installing Python dependencies..."
+python -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
+python -m pip install -e .
+if ($LASTEXITCODE -ne 0) { throw "Application dependency installation failed." }
+python -m pip install "PyInstaller>=6,<7"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed." }
+Write-Host "Starting PyInstaller..."
+# PyInstaller writes progress and warnings to stderr. Redirect that stream so
+# PowerShell's strict error policy does not stop before we can inspect its exit code.
+$ErrorActionPreference = "Continue"
+python -m PyInstaller --noconfirm --clean --onedir --windowed `
+  --name "AI Job Application Assistant" `
+  --distpath $buildRoot `
+  --workpath (Join-Path $buildRoot "pyinstaller") `
+  --specpath $buildRoot `
+  --collect-all reportlab `
+  job_assistant\app.py 2>&1
+$pyInstallerExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+Write-Host "PyInstaller exit code: $pyInstallerExit"
+if ($pyInstallerExit -ne 0) { throw "PyInstaller failed." }
+
+$appDir = Join-Path $buildRoot "AI Job Application Assistant"
+if (-not (Test-Path (Join-Path $appDir "AI Job Application Assistant.exe"))) {
+  throw "PyInstaller did not produce the application executable at $appDir."
+}
+Copy-Item (Join-Path $appDir "*") $publishDir -Recurse -Force
+if (-not (Test-Path (Join-Path $publishDir "AI Job Application Assistant.exe"))) {
+  throw "The PyInstaller output could not be copied to the publish directory."
+}
+# Chocolatey installs WiX after this PowerShell process starts, so refresh PATH
+# from the common WiX 3.14 locations before resolving the three tools.
+$wixBinCandidates = @(
+  "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin",
+  "$env:ProgramFiles\WiX Toolset v3.14\bin"
+)
+if ($env:WIX) { $wixBinCandidates += "$env:WIX\bin" }
+$wixBin = @($wixBinCandidates | Where-Object { Test-Path (Join-Path $_ "candle.exe") } | Select-Object -First 1)
+if ($wixBin.Count -gt 0) {
+  $env:Path = "$($wixBin[0]);$env:Path"
+}
+$candle = (Get-Command candle.exe -ErrorAction SilentlyContinue).Source
+$light = (Get-Command light.exe -ErrorAction SilentlyContinue).Source
+$heat = (Get-Command heat.exe -ErrorAction SilentlyContinue).Source
+if (-not ($candle -and $light -and $heat)) {
+  throw "WiX Toolset 3.14 was not found. Install WiX 3.14.1 from the official WiX release page or run: choco install wixtoolset --version=3.14.1 -y, then reopen PowerShell."
+}
+
+$harvestedPath = Join-Path $wixDir "harvested.wxs"
+& $heat dir $publishDir `
+  -cg AppFiles -dr INSTALLFOLDER -var var.PublishDir -gg -srd -sreg `
+  -out $harvestedPath
+if ($LASTEXITCODE -ne 0) { throw "WiX heat failed." }
+# Heat can preserve the PowerShell variable spelling in Source attributes when
+# invoked through a script. Resolve every supported spelling before candle binds files.
+$harvested = [System.IO.File]::ReadAllText($harvestedPath)
+$harvested = $harvested.Replace("`$(var.PublishDir)", $publishDir).Replace("`$(var.publishDir)", $publishDir).Replace("`$publishDir", $publishDir)
+[System.IO.File]::WriteAllText($harvestedPath, $harvested, [System.Text.UTF8Encoding]::new($false))
+
+$publishDefine = "-dPublishDir=$publishDir"
+& $candle -nologo $publishDefine `
+  -out (Join-Path $wixDir "Product.wixobj") (Join-Path $PSScriptRoot "Product.wxs")
+if ($LASTEXITCODE -ne 0) { throw "WiX candle failed for Product.wxs." }
+& $candle -nologo -dPublishDir=$publishDir `
+  -out (Join-Path $wixDir "harvested.wixobj") (Join-Path $wixDir "harvested.wxs")
+if ($LASTEXITCODE -ne 0) { throw "WiX candle failed for harvested.wxs." }
+
+$msi = Join-Path $artifactDir "AI Job Application Assistant.msi"
+& $light -nologo -out $msi `
+  (Join-Path $wixDir "Product.wixobj") (Join-Path $wixDir "harvested.wixobj")
+if ($LASTEXITCODE -ne 0) { throw "WiX light failed." }
+Write-Host "Created $msi" -ForegroundColor Green

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="AI Job Application Assistant" Language="1033" Version="0.1.0" Manufacturer="JAUTOMATIC" UpgradeCode="A5C6CB75-4A0B-49BF-9D20-7C1161919B20">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of AI Job Application Assistant is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="AI Job Application Assistant" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="APPLICATIONMENUDIR" Name="AI Job Application Assistant" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+
+    <DirectoryRef Id="APPLICATIONMENUDIR">
+      <Component Id="StartMenuShortcutComponent" Guid="*">
+        <Shortcut Id="StartMenuShortcut" Name="AI Job Application Assistant" Target="[INSTALLFOLDER]AI Job Application Assistant.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveApplicationMenuDir" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\JAUTOMATIC\AI Job Application Assistant" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcutComponent" Guid="*">
+        <Shortcut Id="DesktopShortcut" Name="AI Job Application Assistant" Target="[INSTALLFOLDER]AI Job Application Assistant.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\JAUTOMATIC\AI Job Application Assistant" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="AI Job Application Assistant" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+      <ComponentRef Id="DesktopShortcutComponent" />
+    </Feature>
+  </Product>
+</Wix>
