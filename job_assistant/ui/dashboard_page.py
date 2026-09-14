@@ -51,10 +51,6 @@ class DashboardPage(QWidget):
             ("interviews", "Interviews", "Active pipeline"),
             ("offers", "Offers", "Positive outcomes"),
             ("rejected", "Rejected", "Tracked outcomes"),
-            ("total_applications", "Applications", "All tracked"),
-            ("email_applications", "Email route", "Compose manually"),
-            ("needs_attention", "Needs attention", "Human review"),
-            ("average_score", "Avg. match", "All scored jobs"),
         ]
         for index, (key, label, hint) in enumerate(definitions):
             card = StatCard(label, "0", hint)
@@ -127,6 +123,7 @@ class DashboardPage(QWidget):
         self.brief_label.setText(
             f"{counts.get('jobs_found', 0)} new jobs  •  {counts.get('excellent', 0)} excellent  •  "
             f"{counts.get('strong', 0)} strong  •  {counts.get('prepared', 0)} ready for review  •  "
+            f"{counts.get('total_applications', 0)} tracked applications  •  {counts.get('needs_attention', 0)} need attention  •  "
             f"{len(locations)} target markets  •  {len(sources)} source preferences"
         )
 
@@ -149,5 +146,5 @@ class DashboardPage(QWidget):
         self.workflow_status.setText(
             f"{counts.get('prepared', 0)} ready  •  {counts.get('needs_attention', 0)} need review\n"
             f"{counts.get('interviews', 0)} interviews  •  {counts.get('email_applications', 0)} email routes\n"
-            f"{counts.get('offers', 0)} offers  •  Analytics stay local"
+            f"{counts.get('offers', 0)} offers  •  {counts.get('average_score', 0)}% average match  •  Analytics stay local"
         )
