@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget, QComboBox
 
 from job_assistant.config.settings import DEFAULT_JOB_TYPES, DEFAULT_LOCATIONS, DEFAULT_SOURCES, DEFAULT_SEARCH_FREQUENCY
@@ -62,6 +63,19 @@ class SearchPage(QWidget):
             self.source_checks[label] = check
             source_grid.addWidget(check, index // 2, index % 2)
         layout.addWidget(source_group)
+
+        source_links = QHBoxLayout()
+        source_links.addWidget(QLabel("Manual source page"))
+        self.source_link = QComboBox()
+        self.source_link.addItems(DEFAULT_SOURCES)
+        source_links.addWidget(self.source_link, 1)
+        open_source = action_button("Open job page")
+        open_source.clicked.connect(self.open_selected_source)
+        source_links.addWidget(open_source)
+        open_docs = action_button("Open access docs")
+        open_docs.clicked.connect(self.open_selected_source_docs)
+        source_links.addWidget(open_docs)
+        layout.addLayout(source_links)
 
         form_row = QHBoxLayout()
         freq_column = QVBoxLayout()
@@ -173,6 +187,16 @@ class SearchPage(QWidget):
             self.repository.set_setting(key, value)
         self.status.setText("Search configuration saved locally.")
         self.saved.emit()
+
+    def open_selected_source(self) -> None:
+        source = SOURCE_BY_NAME.get(self.source_link.currentText())
+        if source and source.manual_url:
+            QDesktopServices.openUrl(QUrl(source.manual_url))
+
+    def open_selected_source_docs(self) -> None:
+        source = SOURCE_BY_NAME.get(self.source_link.currentText())
+        if source and source.documentation_url:
+            QDesktopServices.openUrl(QUrl(source.documentation_url))
 
     def focus_feed_urls(self) -> None:
         self.feed_urls.setFocus()
