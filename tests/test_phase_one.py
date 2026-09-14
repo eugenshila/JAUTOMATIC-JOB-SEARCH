@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from job_assistant.database.repository import Repository
-from job_assistant.job_sources import JobRecord
+from job_assistant.job_sources import JobRecord, PublicFeedConnector
 from job_assistant.models.entities import CandidateProfile
 from job_assistant.services.matching import match_job
 from job_assistant.services.profile_service import form_from_profile, profile_from_form
@@ -77,6 +78,22 @@ class PhaseOneRepositoryTests(unittest.TestCase):
             parse_feed_sources(["LinkedIn | https://example.test/feed.xml", "https://example.test/jobs.json"]),
             [("LinkedIn", "https://example.test/feed.xml"), ("Public API / RSS feed", "https://example.test/jobs.json")],
         )
+
+    def test_official_ats_json_shapes_are_normalized(self) -> None:
+        connector = PublicFeedConnector()
+        greenhouse = connector._parse_json(json.dumps({"jobs": [{
+            "id": 17, "title": "Operations Analyst", "location": {"name": "Nairobi"},
+            "absolute_url": "https://boards.greenhouse.io/example/jobs/17", "content": "SQL and reporting"
+        }]}).encode(), "https://boards-api.greenhouse.io/v1/boards/example/jobs", "Company career websites")
+        lever = connector._parse_json(json.dumps([{
+            "id": "abc", "text": "Supply Chain Analyst", "categories": {"location": "Dubai", "commitment": "Full-time"},
+            "hostedUrl": "https://jobs.lever.co/example/abc", "descriptionPlain": "Forecasting and inventory"
+        }]).encode(), "https://api.lever.co/v0/postings/example?mode=json", "Company career websites")
+        self.assertEqual(greenhouse[0].location, "Nairobi")
+        self.assertEqual(greenhouse[0].job_url, "https://boards.greenhouse.io/example/jobs/17")
+        self.assertEqual(lever[0].title, "Supply Chain Analyst")
+        self.assertEqual(lever[0].job_type, "Full-time")
+        self.assertIn("Forecasting", lever[0].description)
 
     def test_job_dedupe_and_explainable_match(self) -> None:
         profile = CandidateProfile(

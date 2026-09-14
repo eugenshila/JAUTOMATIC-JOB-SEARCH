@@ -69,7 +69,7 @@ class PublicFeedConnector:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"The JSON feed at {feed_url} could not be read: {exc}") from exc
         if isinstance(data, dict):
-            for key in ("jobs", "results", "data", "items"):
+            for key in ("jobs", "results", "data", "items", "content"):
                 if isinstance(data.get(key), list):
                     data = data[key]
                     break
@@ -79,26 +79,32 @@ class PublicFeedConnector:
         for item in data:
             if not isinstance(item, dict):
                 continue
-            title = str(_value(item, "title", "name") or "").strip()
-            url = str(_value(item, "job_url", "url", "link") or "").strip()
+            categories = item.get("categories") if isinstance(item.get("categories"), dict) else {}
+            title = _text(item, "title", "name", "text")
+            url = _text(item, "job_url", "url", "link", "hostedUrl", "absolute_url", "applyUrl")
             if not title or not url:
                 continue
+            location = _text(item, "location", "city") or _text(categories, "location")
+            sections = item.get("jobAd", {}).get("sections", {}) if isinstance(item.get("jobAd"), dict) else {}
+            job_description = _text(item, "description", "summary", "content", "descriptionPlain")
+            if not job_description and isinstance(sections, dict):
+                job_description = _text(sections.get("jobDescription", {}), "text", "content")
             records.append(JobRecord(
                 title=title,
-                company=str(_value(item, "company", "employer", "company_name") or "").strip(),
-                location=str(_value(item, "location", "city") or "").strip(),
-                country=str(item.get("country") or "").strip(),
-                description=_strip_html(str(_value(item, "description", "summary") or "")),
+                company=_text(item, "company", "employer", "company_name"),
+                location=location,
+                country=_text(item, "country") or _text(categories, "country"),
+                description=_strip_html(job_description),
                 job_url=url,
-                external_id=str(_value(item, "id", "job_id", "external_id") or ""),
+                external_id=_text(item, "id", "job_id", "external_id", "refNumber"),
                 source_name=source_name or self.name,
-                application_email=str(item.get("application_email") or "").strip(),
-                application_method=str(item.get("application_method") or "website").strip(),
-                application_instructions=str(item.get("application_instructions") or "").strip(),
-                job_type=str(item.get("job_type") or "").strip(),
-                workplace_type=str(item.get("workplace_type") or "").strip(),
-                posted_at=str(_value(item, "posted_at", "date_posted") or ""),
-                closing_at=str(_value(item, "closing_at", "deadline") or ""),
+                application_email=_text(item, "application_email"),
+                application_method=_text(item, "application_method") or "website",
+                application_instructions=_text(item, "application_instructions"),
+                job_type=_text(item, "job_type") or _text(categories, "commitment"),
+                workplace_type=_text(item, "workplace_type") or _text(categories, "workplaceType"),
+                posted_at=_text(item, "posted_at", "date_posted", "createdAt", "releasedDate", "updated_at"),
+                closing_at=_text(item, "closing_at", "deadline"),
                 raw_data={"feed_url": feed_url, "source": item},
             ))
         return records
@@ -116,6 +122,22 @@ def _value(item: dict[str, Any], *keys: str) -> Any:
         if item.get(key) is not None:
             return item[key]
     return None
+
+
+def _text(item: dict[str, Any], *keys: str) -> str:
+    """Read common flat and ATS-shaped JSON fields without leaking dict reprs."""
+    value = _value(item, *keys)
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        for key in ("name", "display_name", "text", "html", "value"):
+            if value.get(key) is not None:
+                return str(value[key]).strip()
+        parts = [str(value[key]).strip() for key in ("city", "region", "country") if value.get(key)]
+        return ", ".join(parts)
+    if isinstance(value, list):
+        return ", ".join(str(part).strip() for part in value if part).strip()
+    return str(value).strip()
 
 
 def _strip_html(value: str) -> str:
