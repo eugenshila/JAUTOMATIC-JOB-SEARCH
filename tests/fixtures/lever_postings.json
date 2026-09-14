@@ -1,0 +1,30 @@
+[
+  {
+    "categories": {"location": "Remote", "team": "Engineering", "department": "Engineering"},
+    "createdAt": 1760000000000,
+    "descriptionPlain": "Build backend services with Python and AWS.",
+    "description": "<p>Build backend services with Python and AWS.</p>",
+    "id": "abc-111",
+    "lists": [
+      {"text": "Requirements", "content": "\nPython\nAWS\n", "contentPlain": "\nPython\nAWS\n"}
+    ],
+    "text": "Software Engineer",
+    "country": "US",
+    "workplaceType": "remote",
+    "hostedUrl": "https://jobs.lever.co/leverdemo/abc-111",
+    "applyUrl": "https://jobs.lever.co/leverdemo/abc-111/apply"
+  },
+  {
+    "categories": {"location": "Berlin, Germany", "team": "Design"},
+    "createdAt": 1750000000000,
+    "descriptionPlain": "Design delightful products.",
+    "description": "<p>Design delightful products.</p>",
+    "id": "abc-222",
+    "lists": [],
+    "text": "Product Designer",
+    "country": "DE",
+    "workplaceType": "hybrid",
+    "hostedUrl": "https://jobs.lever.co/leverdemo/abc-222",
+    "applyUrl": "https://jobs.lever.co/leverdemo/abc-222/apply"
+  }
+]

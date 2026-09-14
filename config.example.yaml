@@ -1,0 +1,58 @@
+# jauto example configuration — copy to config.yaml and edit.
+# Personal files (config.yaml, resume, cover letter) are gitignored on purpose.
+
+sources:
+  # Add more with:  jauto add https://boards.greenhouse.io/acme
+  greenhouse: [twilio]          # e.g. boards.greenhouse.io/twilio
+  lever: []                     # e.g. jobs.lever.co/leverdemo
+  ashby: []                     # e.g. jobs.ashbyhq.com/ashby
+  smartrecruiters: []           # e.g. careers.smartrecruiters.com/Visa
+  workable: []                  # e.g. acme.workable.com
+
+profile:
+  first_name: "Jane"
+  last_name: "Doe"
+  email: "jane.doe@example.com"
+  phone: "+254 700 000 000"
+  location: "Nairobi, Kenya"
+  resume_path: "resume.pdf"
+  resume_text_path: "resume.txt"
+  cover_letter_template: "cover_letter_template.txt"
+  years_experience: "3"
+  links:
+    linkedin: "https://www.linkedin.com/in/janedoe"
+    github: "https://github.com/janedoe"
+    portfolio: ""
+
+matching:
+  titles: [software engineer, backend engineer]
+  skills: [python, sql, aws, docker]
+  exclude_titles: [senior, staff, principal, manager, lead]
+  locations: [remote, nairobi, kenya]
+  remote_only: false
+  threshold: 50
+  weights: {title: 35, skills: 35, location: 20, freshness: 10}
+
+apply:
+  min_score: 60
+  max_per_run: 10
+  daily_limit: 15
+  submit_delay: 5
+  auto_submit: false
+  require_resume: true
+  consent_gdpr: false
+  answers:
+    # "How many years of experience do you have?": "3"
+    # "Are you legally authorized to work": "Yes"
+  eeo_answers:
+    # gender: "Prefer not to say"
+  lever_apply_key: ""
+
+network:
+  request_delay: 1.0
+  timeout: 20
+  retries: 2
+  max_description_fetches: 60
+  contact_email: "jane.doe@example.com"
+
+db_path: jauto.db

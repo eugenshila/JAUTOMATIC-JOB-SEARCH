@@ -1,0 +1,32 @@
+{
+  "jobs": [
+    {
+      "id": "7458d4e9-da2e-47bd-98cb-adfda43d42b2",
+      "title": "Software Engineer, Platform",
+      "department": "Engineering",
+      "team": "Platform",
+      "employmentType": "FullTime",
+      "location": "Remote - European Union",
+      "publishedAt": "2026-09-10T14:29:08.532+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/ashby/7458d4e9-da2e-47bd-98cb-adfda43d42b2",
+      "applyUrl": "https://jobs.ashbyhq.com/ashby/7458d4e9-da2e-47bd-98cb-adfda43d42b2/application",
+      "descriptionHtml": "<p>We use Python and AWS.</p>"
+    },
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "title": "Recruiter",
+      "department": "People",
+      "employmentType": "FullTime",
+      "location": "London, UK",
+      "publishedAt": "2026-09-01T10:00:00.000+00:00",
+      "isRemote": false,
+      "workplaceType": "Hybrid",
+      "jobUrl": "https://jobs.ashbyhq.com/ashby/11111111-2222-3333-4444-555555555555",
+      "applyUrl": "https://jobs.ashbyhq.com/ashby/11111111-2222-3333-4444-555555555555/application",
+      "descriptionHtml": "<p>Recruit great people.</p>"
+    }
+  ]
+}

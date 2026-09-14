@@ -1,0 +1,27 @@
+{
+  "name": "Example Co",
+  "description": null,
+  "jobs": [
+    {
+      "id": 12345,
+      "title": "Backend Engineer",
+      "shortcode": "EXAMP1",
+      "location": {"city": "Remote", "region": null, "country": "Anywhere", "remote": true},
+      "department": "Engineering",
+      "url": "https://apply.workable.com/example/j/EXAMP1",
+      "description": "<p>Python, AWS and Docker in production.</p>",
+      "published_on": "2026-09-08T00:00:00Z",
+      "employment_type": "Full-time"
+    },
+    {
+      "id": 67890,
+      "title": "Sales Development Rep",
+      "shortcode": "EXAMP2",
+      "location": {"city": "Nairobi", "country": "Kenya", "remote": false},
+      "department": "Sales",
+      "url": "https://apply.workable.com/example/j/EXAMP2",
+      "description": "<p>Sell things.</p>",
+      "published_on": "2026-09-01T00:00:00Z"
+    }
+  ]
+}

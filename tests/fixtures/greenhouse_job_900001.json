@@ -1,0 +1,29 @@
+{
+  "id": 900001,
+  "title": "Software Engineer, Backend",
+  "content": "<div><p>Join Acme Corp.</p><p>Our stack: Python, AWS, Docker and PostgreSQL. Strong SQL required.</p></div>",
+  "updated_at": "2026-09-12T10:00:00-04:00",
+  "location": {"name": "Remote - US"},
+  "pay_input_ranges": [
+    {
+      "min_cents": 80000000,
+      "max_cents": 120000000,
+      "currency_type": "USD",
+      "title": "Salary Range"
+    }
+  ],
+  "questions": [
+    {"required": true, "label": "First Name", "fields": [{"name": "first_name", "type": "input_text"}]},
+    {"required": true, "label": "Last Name", "fields": [{"name": "last_name", "type": "input_text"}]},
+    {"required": true, "label": "Email", "fields": [{"name": "email", "type": "input_text"}]},
+    {"required": true, "label": "Phone", "fields": [{"name": "phone", "type": "input_text"}]},
+    {"required": true, "label": "Resume/CV", "fields": [{"name": "resume", "type": "input_file"}, {"name": "resume_text", "type": "textarea"}]},
+    {"required": false, "label": "Cover Letter", "fields": [{"name": "cover_letter", "type": "input_file"}, {"name": "cover_letter_text", "type": "textarea"}]},
+    {"required": true, "label": "LinkedIn Profile", "fields": [{"name": "question_5555", "type": "input_text"}]},
+    {"required": true, "label": "Are you legally authorized to work in the US?", "fields": [{"name": "question_3333", "type": "multi_value_single_select", "values": [{"value": 1, "label": "Yes"}, {"value": 0, "label": "No"}]}]},
+    {"required": false, "label": "How did you hear about us?", "fields": [{"name": "question_7777", "type": "input_text"}]}
+  ],
+  "data_compliance": [
+    {"type": "gdpr", "requires_consent": false, "requires_processing_consent": false, "requires_retention_consent": false}
+  ]
+}

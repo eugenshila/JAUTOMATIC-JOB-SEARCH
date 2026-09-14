@@ -1,0 +1,26 @@
+{
+  "offset": 0,
+  "limit": 50,
+  "totalFound": 2,
+  "content": [
+    {
+      "id": "SR-001",
+      "name": "Software Engineer",
+      "releasedDate": "2026-09-10T00:00:00.000Z",
+      "location": {"city": "Nairobi", "region": "Nairobi", "country": "Kenya", "remote": false},
+      "company": {"name": "Example Ltd"},
+      "typeOfEmployment": {"id": "permanent", "label": "Permanent"},
+      "department": {"label": "Engineering"},
+      "experienceLevel": {"id": "mid"}
+    },
+    {
+      "id": "SR-002",
+      "name": "Data Analyst",
+      "releasedDate": "2026-09-05T00:00:00.000Z",
+      "location": {"city": "London", "region": "London", "country": "United Kingdom", "remote": true},
+      "company": {"name": "Example Ltd"},
+      "typeOfEmployment": {"id": "permanent", "label": "Permanent"},
+      "department": {"label": "Data"}
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# jauto runtime state — never commit personal data
+jauto.db
+*.db
+*.sqlite3
+
+# Personal configuration (contains PII) — commit config.example.yaml instead
+config.yaml
+cover_letter*.txt
+resume*.pdf
+*.resume

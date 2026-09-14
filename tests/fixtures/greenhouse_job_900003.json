@@ -1,0 +1,16 @@
+{
+  "id": 900003,
+  "title": "Backend Engineer (Platform)",
+  "content": "<p>We build on Python and AWS.</p>",
+  "location": {"name": "Remote - Global"},
+  "questions": [
+    {"required": true, "label": "First Name", "fields": [{"name": "first_name", "type": "input_text"}]},
+    {"required": true, "label": "Last Name", "fields": [{"name": "last_name", "type": "input_text"}]},
+    {"required": true, "label": "Email", "fields": [{"name": "email", "type": "input_text"}]},
+    {"required": true, "label": "Resume/CV", "fields": [{"name": "resume", "type": "input_file"}, {"name": "resume_text", "type": "textarea"}]},
+    {"required": true, "label": "What is your favorite color?", "fields": [{"name": "question_9999", "type": "input_text"}]}
+  ],
+  "data_compliance": [
+    {"type": "gdpr", "requires_consent": true, "requires_processing_consent": true, "requires_retention_consent": false}
+  ]
+}

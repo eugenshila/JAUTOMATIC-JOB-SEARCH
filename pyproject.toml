@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=66"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jauto"
+version = "0.1.0"
+description = "Automatic job search & application bot for ATS-backed career pages (Greenhouse, Lever, Ashby, SmartRecruiters, Workable)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "JAUTOMATIC-JOB-SEARCH contributors" }]
+keywords = ["jobs", "automation", "job-search", "greenhouse", "lever", "ats"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "requests>=2.28",
+    "PyYAML>=6.0",
+    "click>=8.1",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+jauto = "jauto.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
