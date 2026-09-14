@@ -181,7 +181,20 @@ class MainWindow(QMainWindow):
         if errors:
             message += "\n\n" + "\n".join(errors[:3])
         self.set_status(message.replace("\n", " "))
-        QMessageBox.information(self, "Job search complete", message)
+        if errors and jobs == 0:
+            self.show_page("search")
+            self.search.focus_feed_urls()
+            guidance = (
+                "No approved job-feed URL is configured. Selecting LinkedIn, Indeed, or another source only records your preference; it does not grant access to that website.\n\n"
+                "Add a permitted RSS/XML/JSON endpoint in the feed box, for example:\n"
+                "LinkedIn | https://your-approved-feed.example/jobs.xml\n\n"
+                "Use an official API or approved feed supplied by the provider. For sites without one, open and apply through the official job page manually."
+            )
+            QMessageBox.warning(self, "Search setup required", guidance)
+        elif errors:
+            QMessageBox.warning(self, "Job search completed with warnings", message)
+        else:
+            QMessageBox.information(self, "Job search complete", message)
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)

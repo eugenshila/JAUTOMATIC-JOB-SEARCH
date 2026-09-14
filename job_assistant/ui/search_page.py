@@ -167,6 +167,9 @@ class SearchPage(QWidget):
         self.status.setText("Search configuration saved locally.")
         self.saved.emit()
 
+    def focus_feed_urls(self) -> None:
+        self.feed_urls.setFocus()
+
     def _search(self) -> None:
         self.save_settings()
         self.search_now.emit()
