@@ -125,6 +125,12 @@ The first launch creates the database and local files under:
 
 No API key is required when using a public feed URL. Do not put secrets in the SQLite database, source tree, or log files.
 
+## Dashboard and job-source policy
+
+The dashboard is a local career command center: it shows an opportunity brief, explainable match buckets, prepared/submitted/interview/offer counts, profile and Master CV readiness, source readiness, the review queue, email-route work, and local analytics. It never invents a metric when the local database has no record.
+
+Source availability is documented in [`docs/source-access.md`](docs/source-access.md). The Find Jobs source catalog includes the official/manual documentation URLs for LinkedIn, Indeed, Glassdoor, Google Jobs, BrighterMonday, MyJobMag, Fuzu, Bayt, GulfTalent, Naukrigulf, public ATS routes, and other feeds. A source checkbox is only a preference; it is not API authorization. Sites without a verified public vacancy API remain manual-only until the user supplies an approved endpoint. MyJobMag's official feeds page is recorded, but its actual feed copy targets were not exposed during validation, so no guessed URL is enabled. BrighterMonday's verified RSS endpoint is editorial content rather than job vacancies and is deliberately not configured.
+
 ## Build the MSI on Windows
 
 The MSI source and build script are in `installer/`. An MSI binary is not checked into Git because it is a generated Windows artifact and this development sandbox is Linux-based.

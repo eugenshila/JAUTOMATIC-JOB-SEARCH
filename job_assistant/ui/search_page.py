@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QL
 
 from job_assistant.config.settings import DEFAULT_JOB_TYPES, DEFAULT_LOCATIONS, DEFAULT_SOURCES, DEFAULT_SEARCH_FREQUENCY
 from job_assistant.database.repository import Repository
+from job_assistant.job_sources.catalog import SOURCE_BY_NAME
 from job_assistant.ui.widgets import Card, action_button, page_header, section_label
 
 
@@ -52,6 +53,12 @@ class SearchPage(QWidget):
         source_grid = QGridLayout(source_group)
         for index, label in enumerate(DEFAULT_SOURCES):
             check = QCheckBox(label)
+            source = SOURCE_BY_NAME.get(label)
+            if source:
+                tooltip = f"Automated route: {source.automated_route}"
+                if source.manual_url:
+                    tooltip += f"\nManual fallback: {source.manual_url}"
+                check.setToolTip(tooltip)
             self.source_checks[label] = check
             source_grid.addWidget(check, index // 2, index % 2)
         layout.addWidget(source_group)

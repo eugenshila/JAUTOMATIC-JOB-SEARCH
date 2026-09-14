@@ -170,6 +170,10 @@ class Repository:
                 "interviews": db.execute("SELECT COUNT(*) FROM applications WHERE status IN ('Interview','Second Interview')").fetchone()[0],
                 "offers": db.execute("SELECT COUNT(*) FROM applications WHERE status='Offer'").fetchone()[0],
                 "rejected": db.execute("SELECT COUNT(*) FROM applications WHERE status='Rejected'").fetchone()[0],
+                "total_applications": db.execute("SELECT COUNT(*) FROM applications").fetchone()[0],
+                "email_applications": db.execute("SELECT COUNT(*) FROM applications a JOIN jobs j ON j.id=a.job_id WHERE lower(j.application_method)='email' OR j.application_email <> ''").fetchone()[0],
+                "needs_attention": db.execute("SELECT COUNT(*) FROM applications WHERE needs_attention=1").fetchone()[0],
+                "average_score": db.execute("SELECT COALESCE(AVG(score), 0) FROM job_matches").fetchone()[0],
             }
         return {key: int(value) for key, value in counts.items()}
 
