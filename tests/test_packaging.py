@@ -397,6 +397,21 @@ class WorkflowWiringTest(unittest.TestCase):
         self.assertIn("AZURE_SIGNING_PROFILE", script)
         self.assertIn("SIGN_TIMESTAMP_URL", script)
 
+    def test_powershell_scripts_stay_pure_ascii(self):
+        # CI executes these through the Actions pwsh shell wrapper, whose
+        # encoding pipeline once turned an em-dash (UTF-8 E2 80 94; the 0x94
+        # tail is a CP1252 smart double-quote) into a real string terminator
+        # mid-string and killed the parser with "Missing closing ')'".  ASCII
+        # bytes remove the whole failure class, so the tripwire lives here.
+        for name in ("build.ps1", "verify-install.ps1"):
+            with self.subTest(script=name):
+                raw = (PACKAGING / name).read_bytes()
+                try:
+                    raw.decode("ascii")
+                except UnicodeDecodeError as exc:
+                    self.fail(f"{name} contains non-ASCII bytes ({exc.start}): "
+                              "replace typographic characters with ASCII '-'/'\"'")
+
 
 class DocsDisclosureTest(unittest.TestCase):
     def test_maintainer_guide_covers_pin_signing_and_followups(self):

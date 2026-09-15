@@ -13,7 +13,7 @@
     2. %ProgramFiles%\JAUTOMATIC\jautomatic.exe exists with the MSI's version.
     3. The Start Menu shortcut exists and points at the installed exe.
     4. An Add/Remove Programs entry exists (found by DisplayName), and the
-       Authenticode status of the MSI/exe is recorded (informational only —
+       Authenticode status of the MSI/exe is recorded (informational only -
        pull-request builds are unsigned by design).
     5. The HKLM install marker holds the installed version.
     6. The installed exe passes `jautomatic.exe --selftest` (real end-to-end:
@@ -22,7 +22,7 @@
        code plus the workspace artefacts the selftest writes, not on output.
     7. msiexec uninstalls cleanly; program files, shortcut and ARP entry are gone.
     8. User data survives the uninstall (a canary file in %APPDATA%\JAUTOMATIC
-       must still be there — uninstalling never deletes your profile).
+       must still be there - uninstalling never deletes your profile).
 
   Every check lands in the JSON report (default: next to the MSI as
   install-report.json); the script exits 1 if any check fails. Must run
@@ -49,7 +49,7 @@ $script:Checks = @()
 function Add-Check($Name, $Ok, $Detail) {
     $script:Checks += [ordered]@{ name = $Name; ok = [bool]$Ok; detail = "$Detail" }
     $mark = if ($Ok) { "PASS" } else { "FAIL" }
-    Write-Host "[$mark] $Name — $Detail"
+    Write-Host "[$mark] $Name - $Detail"
 }
 
 function Invoke-Msiexec($Arguments, $LogPath) {
@@ -128,7 +128,7 @@ if (Test-Path $Exe) {
 Add-Check "Authenticode status recorded" $true "msi=$msiSig exe=$exeSig"
 
 # -- 5. install marker ------------------------------------------------------- #
-# NOTE: never deref a property on a possibly-$null lookup result — under
+# NOTE: never deref a property on a possibly-$null lookup result - under
 # Set-StrictMode that raises PropertyNotFound instead of evaluating to $null.
 $markerProps = Get-ItemProperty "HKLM:\SOFTWARE\JAUTOMATIC\job-search" `
     -Name "installed" -ErrorAction SilentlyContinue
@@ -143,7 +143,7 @@ $smokeDetail = "skipped (no installed exe)"
 if (Test-Path $Exe) {
     try {
         # NOTE: jautomatic.exe is a windowed (console=False) build, so it has
-        # NO stdout on Windows — the "SELFTEST OK" line never reaches this
+        # NO stdout on Windows - the "SELFTEST OK" line never reaches this
         # script either way. Assert on the exit code plus the workspace the
         # selftest writes, and keep whatever output exists for diagnostics.
         $smokeOut = & $Exe --selftest --data-dir $smokeDir 2>&1 | Out-String
@@ -219,6 +219,6 @@ $report = [ordered]@{
 }
 $report | ConvertTo-Json -Depth 6 | Set-Content $ReportPath -Encoding Ascii
 Write-Host ""
-Write-Host "Report: $ReportPath — $($report.result) " `
+Write-Host "Report: $ReportPath - $($report.result) " `
     "($($script:Checks.Count - $failed.Count)/$($script:Checks.Count) checks passed)"
 if ($failed.Count -gt 0) { exit 1 }

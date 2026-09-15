@@ -154,16 +154,16 @@ function Find-SigningDlib {
         Where-Object { $_.FullName -match "\\x64\\" } |
         Select-Object -First 1
     if (-not $dlib) {
-        throw ("downloaded signing client has no x64 dlib. The client packaging may have "
-            + "changed with the Artifact Signing rebrand — see packaging/README.md and set "
-            + "ARTIFACT_SIGNING_DLIB to the dlib path from the current Microsoft quickstart.")
+        # single line on purpose: long multi-line string concatenation is the
+        # one construct we will not hand to the CI shell wrapper's encoding.
+        throw "downloaded signing client has no x64 dlib - the client packaging may have changed with the Artifact Signing rebrand; set ARTIFACT_SIGNING_DLIB to the dlib path from the current Microsoft quickstart (see packaging/README.md)."
     }
     return $dlib.FullName
 }
 
 function Invoke-ArtifactSign($Path, $Filter, $TimestampUrl) {
     foreach ($name in @("AZURE_SIGNING_ENDPOINT", "AZURE_SIGNING_ACCOUNT", "AZURE_SIGNING_PROFILE")) {
-        # NOTE: no .Value deref on the lookup — under Set-StrictMode a missing
+        # NOTE: no .Value deref on the lookup - under Set-StrictMode a missing
         # variable would raise PropertyNotFound instead of this message.
         $item = Get-Item "env:$name" -ErrorAction SilentlyContinue
         if (-not $item -or -not $item.Value) {
@@ -171,7 +171,7 @@ function Invoke-ArtifactSign($Path, $Filter, $TimestampUrl) {
         }
     }
     $signtool = Find-Signtool
-    if (-not $signtool) { throw "signtool.exe not found — install the Windows SDK" }
+    if (-not $signtool) { throw "signtool.exe not found - install the Windows SDK" }
     $dlib = Find-SigningDlib
 
     $metadataPath = Join-Path $DistDir "signing-metadata.json"
@@ -208,7 +208,7 @@ function Invoke-ArtifactSign($Path, $Filter, $TimestampUrl) {
 
 function Invoke-Package($Info) {
     if (-not (Test-Path (Join-Path $FrozenDir "jautomatic.exe"))) {
-        throw "nothing to package — run without -SkipFreeze first (no $FrozenDir\jautomatic.exe)"
+        throw "nothing to package - run without -SkipFreeze first (no $FrozenDir\jautomatic.exe)"
     }
     Write-Host "--> harvesting files.wxs"
     & python (Join-Path $PackagingDir "gen_files_wxs.py") `
