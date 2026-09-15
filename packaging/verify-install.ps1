@@ -58,6 +58,24 @@ function Invoke-Msiexec($Arguments, $LogPath) {
     return $proc.ExitCode
 }
 
+function Get-ArpEntry {
+    # Enumerate the Uninstall keys instead of asking Get-ItemProperty for the
+    # wildcard path: under Set-StrictMode the wildcard form raises as soon as
+    # any key lacks the DisplayName value (most of the built-in ones do), and
+    # that error aborted the first real verify run mid-report - after check 3,
+    # before the ARP check could print. Returns the first uninstall entry
+    # whose DisplayName starts with JAUTOMATIC, or $null.
+    $root = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    foreach ($key in @(Get-ChildItem -Path $root -ErrorAction SilentlyContinue)) {
+        $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue
+        if ($props -and $props.PSObject.Properties["DisplayName"] -and
+            $props.DisplayName -like "JAUTOMATIC*") {
+            return $props
+        }
+    }
+    return $null
+}
+
 # --------------------------------------------------------------------------- #
 $resolved = @(Resolve-Path $MsiPath -ErrorAction SilentlyContinue)
 if ($resolved.Count -ne 1) {
@@ -76,6 +94,7 @@ $Exe = Join-Path $InstallDir "jautomatic.exe"
 $StartMenuLink = Join-Path ${env:ProgramData} `
     "Microsoft\Windows\Start Menu\Programs\JAUTOMATIC\JAUTOMATIC JOB SEARCH.lnk"
 
+Write-Host "--> verify-install"
 Write-Host "Verifying $Msi"
 Write-Host ""
 
@@ -100,11 +119,7 @@ Add-Check "Start Menu shortcut resolves to the exe" `
     ($linkTarget -eq $Exe) "$StartMenuLink -> $linkTarget"
 
 # -- 4. Add/Remove Programs entry -------------------------------------------- #
-$arp = Get-ItemProperty `
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" `
-    -ErrorAction SilentlyContinue |
-    Where-Object { $_.DisplayName -like "JAUTOMATIC*" } |
-    Select-Object -First 1
+$arp = Get-ArpEntry
 $productCode = ""
 $arpVersion = ""
 $arpName = ""
@@ -145,9 +160,12 @@ if (Test-Path $Exe) {
         # NOTE: jautomatic.exe is a windowed (console=False) build, so it has
         # NO stdout on Windows - the "SELFTEST OK" line never reaches this
         # script either way. Assert on the exit code plus the workspace the
-        # selftest writes, and keep whatever output exists for diagnostics.
-        $smokeOut = & $Exe --selftest --data-dir $smokeDir 2>&1 | Out-String
-        $exitOk = ($LASTEXITCODE -eq 0)
+        # selftest writes. Start-Process -Wait, not `& $Exe`: whether the call
+        # operator waits for a GUI-subsystem process is not something to hang
+        # the acceptance test on.
+        $proc = Start-Process -FilePath $Exe `
+            -ArgumentList "--selftest --data-dir `"$smokeDir`"" -Wait -PassThru
+        $exitOk = ($proc.ExitCode -eq 0)
         $docsDir = Join-Path $smokeDir "documents"
         $exportsDir = Join-Path $smokeDir "exports"
         $docs = if (Test-Path $docsDir) { @(Get-ChildItem $docsDir -File) } else { @() }
@@ -161,9 +179,8 @@ if (Test-Path $Exe) {
         # CV + cover letter + e-mail + follow-up draft = 4 documents
         $smokeOk = $exitOk -and ($docs.Count -ge 4) -and ($csv.Count -eq 1) `
             -and ($ics.Count -eq 1) -and $dbOk
-        $smokeDetail = ("exit=$LASTEXITCODE docs=$($docs.Count) csv=$($csv.Count) " +
-            "ics=$($ics.Count) db=$dbOk (windowed exe: no stdout by design)" +
-            $(if ($smokeOut.Trim()) { " out=" + $smokeOut.Trim().Substring(0, [Math]::Min(120, $smokeOut.Trim().Length)) } else { "" }))
+        $smokeDetail = ("exit=$($proc.ExitCode) docs=$($docs.Count) csv=$($csv.Count) " +
+            "ics=$($ics.Count) db=$dbOk (windowed exe: no stdout by design)")
     } catch {
         $smokeDetail = "selftest crashed: $($_.Exception.Message)"
     } finally {
@@ -190,11 +207,7 @@ Add-Check "msiexec uninstall exits 0" ($unExit -eq 0) "exit=$unExit log=$Uninsta
 Add-Check "program files removed" (-not (Test-Path $InstallDir)) $InstallDir
 Add-Check "Start Menu shortcut removed" `
     (-not (Test-Path $StartMenuLink)) $StartMenuLink
-$arpAfter = Get-ItemProperty `
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" `
-    -ErrorAction SilentlyContinue |
-    Where-Object { $_.DisplayName -like "JAUTOMATIC*" } |
-    Select-Object -First 1
+$arpAfter = Get-ArpEntry
 $arpAfterName = if ($arpAfter) { $arpAfter.DisplayName } else { "" }
 Add-Check "ARP entry removed" ($null -eq $arpAfter) "remaining=$arpAfterName"
 
@@ -221,4 +234,10 @@ $report | ConvertTo-Json -Depth 6 | Set-Content $ReportPath -Encoding Ascii
 Write-Host ""
 Write-Host "Report: $ReportPath - $($report.result) " `
     "($($script:Checks.Count - $failed.Count)/$($script:Checks.Count) checks passed)"
-if ($failed.Count -gt 0) { exit 1 }
+if ($failed.Count -gt 0) {
+    # Single line on purpose: the CI annotation carries the tail of this log,
+    # so the failing checks must be readable without the earlier output.
+    Write-Host ""
+    Write-Host ("FAILED CHECKS: " + (($failed | ForEach-Object { $_.name }) -join "; "))
+    exit 1
+}

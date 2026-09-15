@@ -461,6 +461,27 @@ class WorkflowWiringTest(unittest.TestCase):
                               "replace typographic characters with ASCII '-'/'\"'")
 
 
+class VerifyInstallScriptTest(unittest.TestCase):
+    """Regressions from the first real install/verify run (35001181526)."""
+
+    def setUp(self):
+        self.text = (PACKAGING / "verify-install.ps1").read_text(encoding="utf-8")
+
+    def test_arp_lookup_survives_set_strictmode(self):
+        # "Get-ItemProperty HKLM:\...\Uninstall\* | Where-Object { $_.DisplayName }"
+        # raises under Set-StrictMode -Version Latest as soon as one of the
+        # built-in uninstall keys lacks DisplayName, which killed the first
+        # verify run between check 3 and check 4 with a half-written log.
+        self.assertNotIn("Uninstall\\*", self.text)
+        self.assertIn("Get-ArpEntry", self.text)
+        self.assertIn('$props.PSObject.Properties["DisplayName"]', self.text)
+
+    def test_failing_checks_are_summarised_on_one_line(self):
+        # CI annotations carry the log tail only; a one-line summary keeps the
+        # failing check names readable however long the log gets.
+        self.assertIn("FAILED CHECKS:", self.text)
+
+
 class DocsDisclosureTest(unittest.TestCase):
     def test_maintainer_guide_covers_pin_signing_and_followups(self):
         readme = (PACKAGING / "README.md").read_text(encoding="utf-8")
