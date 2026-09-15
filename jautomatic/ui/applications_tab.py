@@ -422,7 +422,9 @@ class ApplicationsTab(QWidget):
             self.ctx.notify(f"Autopilot prepared {len(materials)} application(s).", "success")
 
         self.ctx.run_task("Autopilot preparing materials",
-                          lambda: self.ctx.pipeline.autopilot(self.ctx.profile), done)
+                          lambda: self.ctx.pipeline.autopilot(
+                              self.ctx.profile,
+                              should_cancel=self.ctx.cancel_event.is_set), done)
 
     def _save_interview(self) -> None:
         row = self._current()

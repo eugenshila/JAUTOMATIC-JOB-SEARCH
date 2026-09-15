@@ -211,7 +211,10 @@ class JobSearchTab(QWidget):
             limit_per_source=self.per_source.value())
 
         def work():  # noqa: ANN202
-            outcome = self.ctx.pipeline.scraper.search(query)
+            cancel = self.ctx.cancel_event.is_set
+            outcome = self.ctx.pipeline.scraper.search(query, should_cancel=cancel)
+            if cancel():
+                return outcome, []  # closing: skip the import against the workspace
             return outcome, self.ctx.pipeline.import_jobs(outcome.jobs)
 
         def done(result) -> None:  # noqa: ANN001
@@ -382,8 +385,11 @@ class JobSearchTab(QWidget):
         profile = self.ctx.profile
 
         def work():  # noqa: ANN202
+            cancel = self.ctx.cancel_event.is_set
             results = []
             for job in jobs:
+                if cancel():
+                    break  # closing: hand back the partial batch
                 application = self.ctx.pipeline.ensure_application(job)
                 results.append(self.ctx.pipeline.prepare(application, profile))
             return results

@@ -356,7 +356,9 @@ class DashboardTab(QWidget):
             self.ctx.refresh_all()
 
         self.ctx.run_task("Autopilot preparing materials",
-                          lambda: self.ctx.pipeline.autopilot(self.ctx.profile), done)
+                          lambda: self.ctx.pipeline.autopilot(
+                              self.ctx.profile,
+                              should_cancel=self.ctx.cancel_event.is_set), done)
 
     def _export_csv(self) -> None:
         def done(path) -> None:  # noqa: ANN001

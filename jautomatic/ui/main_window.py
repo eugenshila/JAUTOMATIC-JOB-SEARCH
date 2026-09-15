@@ -9,10 +9,11 @@ The window doubles as the application context object that every tab receives as
 """
 from __future__ import annotations
 
+import threading
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, QSettings, Qt, QThreadPool, Signal, Slot
+from PySide6.QtCore import QByteArray, QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
                                QPushButton, QSizePolicy, QStackedWidget, QStatusBar, QVBoxLayout,
@@ -43,15 +44,26 @@ class WorkerSignals(QObject):
 
 
 class Worker(QRunnable):
-    """Runs ``fn`` on the thread pool and reports back on the GUI thread."""
+    """Runs ``fn`` on the thread pool and reports back on the GUI thread.
 
-    def __init__(self, fn, *args, **kwargs) -> None:  # noqa: ANN001, ANN003
+    ``cancel`` is the window's shutdown event: a worker that gets a CPU *after*
+    closing began (queued behind busy threads) checks it first and returns
+    without touching the fn it would have run — no half-started tasks against
+    a closing workspace.  Workers already running are *not* interrupted from
+    here; long loops poll the same event cooperatively instead.
+    """
+
+    def __init__(self, fn, *args, cancel: threading.Event | None = None,
+                 **kwargs) -> None:  # noqa: ANN001, ANN003
         super().__init__()
         self.fn, self.args, self.kwargs = fn, args, kwargs
+        self.cancel = cancel
         self.signals = WorkerSignals()
 
     @Slot()
     def run(self) -> None:  # noqa: D102
+        if self.cancel is not None and self.cancel.is_set():
+            return  # refused: the app is closing (no signals — nobody is listening)
         try:
             result = self.fn(*self.args, **self.kwargs)
         except Exception as exc:  # noqa: BLE001 - reported to the UI, never fatal
@@ -79,7 +91,9 @@ class MainWindow(QMainWindow):
         self._header_actions: dict[str, list[QWidget]] = {}
         self._previews: list[QWidget] = []
         self._workers: set[Worker] = set()
-        self._qt_settings = QSettings("JAUTOMATIC", "job-search")
+        # Set once, in closeEvent: refuses new tasks, aborts queued workers and
+        # tells long-running loops (search, batch prepare) to wind down early.
+        self.cancel_event = threading.Event()
 
         self.setWindowTitle(f"{APP_TITLE} {__version__}")
         self.resize(1440, 900)
@@ -233,14 +247,19 @@ class MainWindow(QMainWindow):
         self.update_meta()
 
     def run_task(self, description: str, fn, on_done=None, on_error=None, *args,
-                 **kwargs) -> Worker:  # noqa: ANN001, ANN003, ANN201
+                 **kwargs) -> Worker | None:  # noqa: ANN001, ANN003, ANN201
         """Run ``fn`` in the background; callbacks fire on the GUI thread.
 
         The worker is kept in ``self._workers`` for the duration of the task: PySide6
         does not keep a Python reference to a ``QRunnable`` handed to ``QThreadPool``,
         so a worker nobody points at is garbage collected before it ever runs.
+
+        Returns ``None`` (and starts nothing) once the window is closing — new
+        work against a half-torn-down UI is refused, never queued.
         """
-        worker = Worker(fn, *args, **kwargs)
+        if self._closing:
+            return None
+        worker = Worker(fn, *args, cancel=self.cancel_event, **kwargs)
         self._workers.add(worker)
         self._busy += 1
         self.set_status(f"{description}…")
@@ -251,6 +270,11 @@ class MainWindow(QMainWindow):
 
         def finish(result) -> None:  # noqa: ANN001
             forget()
+            if self._closing:
+                # Shutdown in progress: the workspace may already be closed and
+                # the UI is mid-teardown — keep the books, touch nothing else.
+                self._busy = max(0, self._busy - 1)
+                return
             self._task_finished()
             if on_done is not None:
                 try:
@@ -260,6 +284,9 @@ class MainWindow(QMainWindow):
 
         def fail(message: str) -> None:
             forget()
+            if self._closing:
+                self._busy = max(0, self._busy - 1)
+                return
             self._task_finished()
             self.notify(message, "error")
             if on_error is not None:
@@ -272,10 +299,11 @@ class MainWindow(QMainWindow):
 
     def _task_finished(self) -> None:
         self._busy = max(0, self._busy - 1)
-        if not self._closing:
-            self.unsetCursor()
-            if self._busy == 0:
-                self.set_status("Ready")
+        if self._closing:
+            return  # no status/cursor/stats writes against a closing workspace
+        self.unsetCursor()
+        if self._busy == 0:
+            self.set_status("Ready")
         self.update_meta()
 
     def set_status(self, text: str) -> None:
@@ -299,6 +327,8 @@ class MainWindow(QMainWindow):
         return box.exec() == QMessageBox.Yes
 
     def update_meta(self) -> None:
+        if self._closing:
+            return  # workspace may already be closed; stats would raise
         stats = self.workspace.stats()
         busy = " · working…" if self._busy else ""
         self.status_meta.setText(
@@ -320,6 +350,9 @@ class MainWindow(QMainWindow):
         self.update_meta()
 
     def save_settings(self, settings: AppSettings) -> None:
+        # The settings form rebuilds an AppSettings from its widgets, so it
+        # would silently drop the window geometry — carry it over instead.
+        settings.window_geometry = self.settings.window_geometry or settings.window_geometry
         self.settings = settings
         self.workspace.save_settings(settings)
         self.pipeline.settings = settings
@@ -366,18 +399,38 @@ class MainWindow(QMainWindow):
 
     # -------------------------------------------------------- lifecycle   #
     def _restore_geometry(self) -> None:
-        geometry = self._qt_settings.value("geometry")
-        if geometry is not None:
-            self.restoreGeometry(geometry)
+        blob = self.settings.window_geometry
+        # Stored as base64 in settings.json next to everything else; a
+        # corrupt/foreign value just means Qt declines to restore it.
+        self._geometry_restored = bool(blob) and self.restoreGeometry(
+            QByteArray.fromBase64(blob.encode("ascii", "ignore")))
         theme_name = self.settings.theme or th.DEFAULT_THEME
         app = QApplication.instance()
         if app is not None:
             th.apply_theme(app, theme_name)
 
+    def _save_geometry(self) -> None:
+        blob = bytes(self.saveGeometry().toBase64().data()).decode("ascii")
+        self.settings.window_geometry = blob
+        try:
+            self.workspace.save_settings(self.settings)
+        except OSError:
+            pass  # window placement is cosmetic — never let it break a quit
+
     def closeEvent(self, event) -> None:  # noqa: ANN001, N802
-        self._qt_settings.setValue("geometry", self.saveGeometry())
+        self._save_geometry()
         self._closing = True
-        self.pool.waitForDone(800)
+        # Cooperative shutdown, no deadline: flag closing, drop queued work,
+        # let running tasks wind down (they poll cancel_event between units of
+        # work), then join the pool for as long as that actually takes.
+        self.cancel_event.set()
+        self.pool.clear()
+        self.pool.waitForDone()
+        for worker in self._workers:
+            # Nothing is running anymore, but queued signal deliveries may still
+            # fire during teardown (e.g. while preview dialogs keep the app
+            # alive) — mute them so nobody touches the closed workspace.
+            worker.signals.blockSignals(True)
         self._workers.clear()
         self.workspace.close()
         super().closeEvent(event)

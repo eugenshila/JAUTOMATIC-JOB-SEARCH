@@ -13,8 +13,8 @@ from datetime import date
 from pathlib import Path
 
 from ..models import (JobPosting, Profile, human_join, keywords, pretty_term, slugify,
-                      source_label, specific_keywords, tokenize)
-from .cv_generator import GeneratedDocument, export
+                      source_label, specific_keywords, tokenize, unique_document_path)
+from .cv_generator import GeneratedDocument, document_suffix, export
 
 TONES = ("professional", "friendly", "enthusiastic", "concise")
 TONE_LABELS = {
@@ -226,7 +226,7 @@ class CoverLetterService:
 
     def generate(self, profile: Profile, job: JobPosting, match: MatchContext | None = None,
                  tone: str | None = None, output_dir: Path | None = None,
-                 fmt: str = "docx") -> GeneratedDocument:
+                 fmt: str = "docx", *, reuse: str | Path | None = None) -> GeneratedDocument:
         markdown = render_cover_letter(profile, job, match, tone)
         document = GeneratedDocument(
             kind="cover_letter", text=markdown, template=(tone or profile.tone or "professional"),
@@ -234,7 +234,10 @@ class CoverLetterService:
         if output_dir is not None:
             stem = (f"CoverLetter_{slugify(profile.display_name, 24)}_"
                     f"{slugify(job.company, 18)}_{slugify(job.title, 20)}")
-            document.path = export(markdown, Path(output_dir) / f"{stem}.{fmt}", fmt,
+            key = f"cover_letter|{profile.display_name}|{job.company}|{job.title}"
+            path = unique_document_path(output_dir, stem, document_suffix(fmt),
+                                        key=key, reuse=reuse)
+            document.path = export(markdown, path, fmt,
                                    title=f"Cover letter – {job.title}")
         return document
 

@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import sqlite3
 import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
 from jautomatic.models import (SAMPLE_PROFILE, Application, ApplicationStatus, JobPosting,
-                               Profile, Workspace, pretty_term, human_join, parse_date, slugify)
+                               Profile, Workspace, pretty_term, human_join, parse_date, slugify,
+                               unique_document_path)
 from jautomatic.services.application_pipeline import ApplicationPipeline, match_job, rank_jobs
+from tests.support import WorkspaceTestCase
 
 
 def sample_profile() -> Profile:
@@ -38,16 +42,23 @@ def welder_job() -> JobPosting:
                       tags=["welding", "safety"], posted_at=(date.today() - timedelta(days=40)).isoformat())
 
 
-class WorkspaceTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
-        self.addCleanup(self.tmp.cleanup)
+class WorkspaceTests(WorkspaceTestCase):
+    """Uses the shared temp-dir/workspace scaffolding (see tests/support.py)."""
 
     def test_creates_data_files(self):
         self.assertTrue(self.workspace.db_path.exists())
         self.assertTrue(self.workspace.documents_dir.is_dir())
         self.assertTrue(self.workspace.exports_dir.is_dir())
+
+    def test_close_releases_the_connection_and_is_idempotent(self):
+        # This is the contract that keeps temp-dir teardown Windows-safe: the
+        # SQLite handle must be gone before the directory is removed (an open
+        # handle blocks deletion on Windows - WinError 32), and closing twice
+        # must not raise because cleanup paths can overlap.
+        self.workspace.close()
+        with self.assertRaises(sqlite3.ProgrammingError):
+            self.workspace._conn.execute("SELECT 1")
+        self.workspace.close()
 
     def test_job_upsert_deduplicates(self):
         first = self.workspace.save_jobs([python_job()])
@@ -78,13 +89,8 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(again.data_dir, str(self.workspace.root))
 
 
-class ThreadSafetyTests(unittest.TestCase):
+class ThreadSafetyTests(WorkspaceTestCase):
     """The UI imports/generates on a thread pool, so the workspace must cope."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
-        self.addCleanup(self.tmp.cleanup)
 
     def test_concurrent_writes_from_many_threads(self):
         import concurrent.futures as futures
@@ -149,11 +155,9 @@ class MatchingTests(unittest.TestCase):
         self.assertTrue(0 <= result.score <= 100)
 
 
-class PipelineTests(unittest.TestCase):
+class PipelineTests(WorkspaceTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
-        self.addCleanup(self.tmp.cleanup)
+        super().setUp()
         self.workspace.save_profile(sample_profile())
         self.settings = self.workspace.load_settings()
         self.settings.export_format = "docx"
@@ -202,6 +206,83 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(materials.cv.path.exists())
         self.assertEqual(self.workspace.get_application(
             row.application.application_id).cover_letter_path, "")
+
+    def test_colliding_slugs_never_overwrite_each_other(self):
+        # "AT&T" and "AT T" both slugify to "at-t" — historically the second
+        # application's CV overwrote the first one's.
+        job_a = python_job(company="AT&T", title="Platform Engineer",
+                           url="https://example.com/jobs/at-and-t")
+        job_b = python_job(company="AT T", title="Platform Engineer",
+                           url="https://example.com/jobs/at-t")
+        app_a = self.pipeline.ensure_application(job_a)
+        app_b = self.pipeline.ensure_application(job_b)
+        materials_a = self.pipeline.prepare(app_a, self.profile, fmt="md")
+        materials_b = self.pipeline.prepare(app_b, self.profile, fmt="md")
+        for doc_a, doc_b in ((materials_a.cv, materials_b.cv),
+                             (materials_a.cover_letter, materials_b.cover_letter),
+                             (materials_a.email, materials_b.email)):
+            self.assertNotEqual(doc_a.path, doc_b.path)
+            self.assertTrue(doc_a.path.exists(), doc_a.path)
+            self.assertTrue(doc_b.path.exists(), doc_b.path)
+        # the loser of the tie gets the hash-disambiguated name; both keep their content
+        self.assertRegex(materials_b.cv.path.stem, r"-[0-9a-f]{4}$")
+        self.assertIn("AT&T", materials_a.cv.path.read_text("utf-8"))
+        self.assertIn("AT T", materials_b.cv.path.read_text("utf-8"))
+        record_a = self.workspace.get_application(app_a.application_id)
+        record_b = self.workspace.get_application(app_b.application_id)
+        self.assertEqual(record_a.cv_path, str(materials_a.cv.path))
+        self.assertEqual(record_b.cv_path, str(materials_b.cv.path))
+
+    def test_fully_non_latin_names_do_not_all_land_on_untitled(self):
+        # CJK company names slugify to "" -> "untitled": the classic mass collision.
+        job_a = python_job(company="株式会社アルファ", title="バックエンドエンジニア",
+                           url="https://example.com/jobs/alpha")
+        job_b = python_job(company="株式会社ベータ", title="バックエンドエンジニア",
+                           url="https://example.com/jobs/beta")
+        materials_a = self.pipeline.prepare(self.pipeline.ensure_application(job_a),
+                                            self.profile, fmt="md")
+        materials_b = self.pipeline.prepare(self.pipeline.ensure_application(job_b),
+                                            self.profile, fmt="md")
+        self.assertIn("untitled", materials_a.cv.path.stem)
+        self.assertNotEqual(materials_a.cv.path, materials_b.cv.path)
+        self.assertTrue(materials_a.cv.path.exists())
+        self.assertTrue(materials_b.cv.path.exists())
+
+    def test_regenerating_materials_updates_the_same_files_in_place(self):
+        row = self._tracked()
+        first = self.pipeline.prepare(row.application, self.profile, fmt="md")
+        before = sorted(path.name for path in self.workspace.documents_dir.iterdir())
+        second = self.pipeline.prepare(row.application, self.profile, fmt="md")
+        after = sorted(path.name for path in self.workspace.documents_dir.iterdir())
+        self.assertEqual(first.cv.path, second.cv.path)
+        self.assertEqual(first.cover_letter.path, second.cover_letter.path)
+        self.assertEqual(first.email.path, second.email.path)
+        self.assertEqual(before, after)  # no hash-suffixed copies of our own files
+        refreshed = self.workspace.get_application(row.application.application_id)
+        self.assertEqual(refreshed.cv_path, str(second.cv.path))
+
+    def test_search_and_import_drops_the_import_when_cancelled_midway(self):
+        # First cancel poll (inside the scraper) says "keep going", the second
+        # (after the fetch, before the import) says "closing" — then nothing may
+        # be written to a workspace that is about to close.
+        answers = iter([False])  # scraper says "go"; the post-fetch check says "closing"
+        outcome, created = self.pipeline.search_and_import(
+            "python", sources=["sample"], limit_per_source=3,
+            should_cancel=lambda: next(answers, True))
+        self.assertTrue(outcome.jobs)          # the fetch itself completed
+        self.assertEqual(created, [])          # ... but the import was refused
+        self.assertEqual(self.pipeline.tracker(self.profile), [])
+
+    def test_prepare_batch_stops_between_rows_when_cancelled(self):
+        self.pipeline.ensure_application(python_job(url="https://example.com/jobs/one"))
+        self.pipeline.ensure_application(python_job(company="Kestrel Logistics",
+                                                    url="https://example.com/jobs/two"))
+        rows = self.pipeline.tracker(self.profile)
+        self.assertEqual(len(rows), 2)
+        answers = iter([False, True])  # first row proceeds, second is skipped
+        materials = self.pipeline.prepare_batch(rows, self.profile,
+                                                should_cancel=lambda: next(answers, True))
+        self.assertEqual(len(materials), 1)
 
     def test_template_and_format_options_are_honoured(self):
         row = self._tracked()
@@ -330,6 +411,47 @@ class ModelHelperTests(unittest.TestCase):
     def test_slugify(self):
         self.assertEqual(slugify("Senior Python Engineer / Berlin"), "senior-python-engineer-berlin")
         self.assertEqual(slugify(""), "untitled")
+
+    def test_unique_document_path_prefers_the_plain_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = unique_document_path(tmp, "CV_alice_acme_dev", ".docx", key="cv|alice|acme|dev")
+            self.assertEqual(path.name, "CV_alice_acme_dev.docx")
+
+    def test_unique_document_path_hashes_on_collision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            taken = Path(tmp) / "CV_alice_acme_dev.docx"
+            taken.write_text("old", encoding="utf-8")
+            path = unique_document_path(tmp, "CV_alice_acme_dev", ".docx", key="cv|alice|acme|dev")
+            digest = hashlib.sha1(b"cv|alice|acme|dev").hexdigest()[:4]
+            self.assertEqual(path.name, f"CV_alice_acme_dev-{digest}.docx")
+            self.assertEqual(taken.read_text(encoding="utf-8"), "old")  # never clobbered
+            # deterministic: same key again -> same hashed name
+            again = unique_document_path(tmp, "CV_alice_acme_dev", ".docx", key="cv|alice|acme|dev")
+            self.assertEqual(again, path)
+            # different un-slugified identity -> different suffix
+            other = unique_document_path(tmp, "CV_alice_acme_dev", ".docx", key="cv|alice|at t|dev")
+            self.assertNotEqual(other.name, path.name)
+
+    def test_unique_document_path_counts_past_digest_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = "cv|alice|acme|dev"
+            digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:4]
+            stem = "CV_alice_acme_dev"
+            for name in (f"{stem}.docx", f"{stem}-{digest}.docx", f"{stem}-{digest}-2.docx"):
+                (Path(tmp) / name).write_text("x", encoding="utf-8")
+            path = unique_document_path(tmp, stem, ".docx", key=key)
+            self.assertEqual(path.name, f"{stem}-{digest}-3.docx")
+
+    def test_unique_document_path_reuse_wins_outright(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = Path(tmp) / "CV_alice_acme_dev.docx"
+            path = unique_document_path(tmp, "CV_alice_acme_dev", ".docx",
+                                        key="cv|alice|acme|dev", reuse=previous)
+            self.assertEqual(path, previous)  # regenerating updates in place
+            # ... even if the file was deleted meanwhile
+            path = unique_document_path(tmp, "CV_alice_acme_dev", ".docx",
+                                        key="cv|alice|acme|dev", reuse=str(previous))
+            self.assertEqual(path, previous)
 
     def test_parse_date_variants(self):
         self.assertEqual(parse_date("2026-09-09T08:12:44").isoformat(), "2026-09-09")

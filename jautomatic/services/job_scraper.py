@@ -556,11 +556,12 @@ class JobScraper:
         self.sources = {s.name: s for s in (sources if sources is not None else default_sources())}
 
     # -- public API -------------------------------------------------------- #
-    def search(self, query: SearchQuery, progress=None) -> SearchOutcome:  # noqa: ANN001
+    def search(self, query: SearchQuery, progress=None, should_cancel=None) -> SearchOutcome:  # noqa: ANN001
         started = time.perf_counter()
         selected = self._select_sources(query)
         results: list[FetchResult] = []
         collected: list[JobPosting] = []
+        cancelled = False
 
         def run(source: JobSource) -> FetchResult:
             begin = time.perf_counter()
@@ -576,17 +577,26 @@ class JobScraper:
                                    time.perf_counter() - begin)
 
         if selected:
-            with futures.ThreadPoolExecutor(max_workers=min(6, len(selected))) as pool:
+            pool = futures.ThreadPoolExecutor(max_workers=min(6, len(selected)))
+            try:
                 for result in pool.map(run, selected):
+                    if should_cancel is not None and should_cancel():
+                        # App closing: stop consuming, drop queued fetches and let
+                        # the in-flight ones (bounded by the request timeout) end
+                        # on their own instead of holding shutdown hostage.
+                        cancelled = True
+                        break
                     results.append(result)
                     collected.extend(result.jobs)
                     if progress:
                         progress(result)
+            finally:
+                pool.shutdown(wait=not cancelled, cancel_futures=True)
 
         fallback = False
         # Nothing came back and something went wrong on the wire -> keep the app useful
         # by falling back to the offline demo source (clearly flagged in the summary).
-        if not collected and results and all(not r.ok for r in results):
+        if not cancelled and not collected and results and all(not r.ok for r in results):
             sample = self.sources.get(SampleSource.name)
             if sample is not None and not any(r.source == sample.name for r in results):
                 try:

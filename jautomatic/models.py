@@ -59,6 +59,43 @@ def slugify(text: str, max_length: int = 60) -> str:
     return text[:max_length] or "untitled"
 
 
+def unique_document_path(directory: str | Path, stem: str, suffix: str, *,
+                         key: str = "", reuse: str | Path | None = None) -> Path:
+    """Pick a path for a generated document that never clobbers an unrelated file.
+
+    ``slugify`` normalises hard (truncation, every non-alphanumeric run becomes
+    ``-``), so two *different* (company, title) pairs can produce the same
+    ``stem`` — and the second write would silently overwrite the first
+    application's CV.  The rules below keep names deterministic without any
+    cross-run state:
+
+    * ``reuse`` (the caller's own previously generated path) wins outright:
+      regenerating materials for the *same* application updates it in place
+      instead of accumulating copies.
+    * Otherwise the plain ``<stem><suffix>`` name is used when free — the
+      overwhelmingly common case, so file names stay human-readable.
+    * If it is taken, a short hash of the *un-slugified* identity (``key``)
+      disambiguates: ``<stem>-a3f9<suffix>``.  Identical raw input hashes to
+      the same suffix, while different inputs that merely slugify alike get
+      distinct names.
+    * The (astronomically unlikely) same-digest collision falls back to
+      ``-2``, ``-3``, …
+    """
+    directory = Path(directory)
+    if reuse:
+        return Path(reuse)
+    candidate = directory / f"{stem}{suffix}"
+    if not candidate.exists():
+        return candidate
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:4]
+    candidate = directory / f"{stem}-{digest}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = directory / f"{stem}-{digest}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
 def parse_date(value: object) -> date | None:
     """Best-effort date parser for job-board payloads (ISO, RFC-2822, epoch)."""
     if value in (None, "", 0):
@@ -703,6 +740,10 @@ class AppSettings:
     adzuna_app_key: str = ""
     adzuna_country: str = "gb"
     last_search_query: str = ""
+    # Base64-encoded QMainWindow geometry, written by the window on close.
+    # Lives here (not in QSettings) so the data dir really is the whole story:
+    # deleting it *is* a full reset, with no stray HKCU registry key behind.
+    window_geometry: str = ""
 
     # -- helpers ----------------------------------------------------------- #
     @property

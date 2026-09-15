@@ -1,0 +1,186 @@
+# Windows installer: freeze -> (sign) -> package -> (sign) -> verify.
+#
+# Every push to main, every pull request and every manual dispatch produces an
+# MSI and then installs it on the same runner (verify-install.ps1), so a WiX
+# authoring slip or a broken frozen build fails loudly here instead of on a
+# user's machine. The MSI + install report ship as run artefacts.
+#
+# Diagnostics: each stage tees its output into a log file and the failure step
+# turns the tail of those logs (plus the last "--> stage" marker) into an
+# ::error:: annotation and a job summary. Annotations are always reachable -
+# even when the raw log archive is not - so a red run explains itself without
+# anyone having to re-run it.
+#
+# Signing (releases): the two azure/artifact-signing-action rounds only run
+# when the signing account is configured - repo variables AZURE_SIGNING_ENDPOINT /
+# AZURE_SIGNING_ACCOUNT / AZURE_SIGNING_PROFILE plus secrets AZURE_CLIENT_ID /
+# AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID (OIDC app registration). Without
+# them the MSI still builds and verifies; it is simply unsigned. See
+# packaging/README.md "Signing" for setup.
+name: windows-installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # OIDC for azure/login (only used when signing is configured)
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+      # Secrets may not be referenced in `if:` conditions (GitHub rejects the
+      # workflow file outright - "Unrecognized named-value: 'secrets'"), so the
+      # client id lands in an env var and the conditions below test that name.
+      # It never leaves the runner: only azure/login consumes it, via `with:`.
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      # Runner stdout is a pipe, so Python picks the ANSI code page (cp1252)
+      # for it: any non-ASCII test name or failure message (job titles in the
+      # fixtures, "->" arrows in the reports) would raise UnicodeEncodeError and
+      # hide the real failure behind an encoding traceback. UTF-8 mode keeps
+      # print() faithful to what the suite produces locally.
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up .NET (WiX runs as a .NET tool)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Freeze (venv, tests, PyInstaller)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          packaging\build.ps1 -SkipPackage *>&1 | Tee-Object -FilePath build-freeze.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Azure login (OIDC)
+        if: >-
+          ${{ env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' &&
+              env.AZURE_SIGNING_PROFILE != '' && env.AZURE_CLIENT_ID != '' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign frozen binaries
+        if: >-
+          ${{ env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' &&
+              env.AZURE_SIGNING_PROFILE != '' && env.AZURE_CLIENT_ID != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist\jautomatic
+          files-folder-filter: exe,dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package (harvest + wix build)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          packaging\build.ps1 -SkipFreeze -SkipTests *>&1 | Tee-Object -FilePath build-package.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Sign installer
+        if: >-
+          ${{ env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' &&
+              env.AZURE_SIGNING_PROFILE != '' && env.AZURE_CLIENT_ID != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          packaging\verify-install.ps1 -MsiPath dist\*.msi *>&1 | Tee-Object -FilePath verify-install.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Expose build diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          $logs = @("build-freeze.log", "build-package.log", "verify-install.log")
+          $reported = 0
+          $existing = @($logs | Where-Object { Test-Path $_ })
+          foreach ($log in $existing) {
+            $lines = @(Get-Content $log)
+            # A stage logs "--> <what> exit code: <n>"; only the stage that
+            # actually failed (or the throw that names it) needs an annotation,
+            # so the report stays about the failure, not the whole build.
+            $failed = @($lines | Where-Object {
+                $_ -match '^--> .+ exit code: [1-9][0-9]* \(log:' -or
+                $_ -match ' failed \(exit [1-9][0-9]*\)'
+            })
+            if (-not $failed -and $reported -gt 0) { continue }
+            if (-not $failed -and $log -ne $existing[-1]) { continue }
+            $reported++
+            $stage = @($lines | Where-Object { $_ -match '^--> ' } | Select-Object -Last 1)
+            $tail = ($lines | Select-Object -Last 15) -join " || "
+            $message = "stage=$($stage -join '') :: $tail"
+            # Annotations are single-line and length-limited; keep the newest
+            # information and escape what the command syntax reserves.
+            if ($message.Length -gt 3500) { $message = $message.Substring($message.Length - 3500) }
+            $escaped = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=JAUTOMATIC build failure ($log)::$escaped"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### $log (last 120 lines)"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ('```' + "`n" +
+                (($lines | Select-Object -Last 120) -join "`n") + "`n" + '```')
+          }
+
+      - name: Upload installer
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JAUTOMATIC-Setup-x64
+          path: dist\*.msi
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics
+          path: |
+            build-freeze.log
+            build-package.log
+            verify-install.log
+            build/logs/*.log
+          if-no-files-found: ignore
+
+      - name: Upload install report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-report
+          path: |
+            dist\install-report.json
+            dist\install.log
+            dist\uninstall.log
+          if-no-files-found: ignore

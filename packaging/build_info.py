@@ -1,0 +1,212 @@
+"""Single source of truth for the Windows installer build.
+
+Everything the MSI build needs to know lives here (or is derived here), so a
+version bump or a WiX upgrade is a one-spot edit:
+
+* ``APP_VERSION`` — re-exported from :mod:`jautomatic` (bump the app version
+  there; the installer follows automatically).
+* ``WIX_VERSION`` — the pinned WiX Toolset version.  The same pin lives in
+  ``.config/dotnet-tools.json``; ``build.ps1 --check`` fails the build if the
+  two disagree.  See ``packaging/README.md`` for the bump runbook.
+* ``SIGNING_*`` — the repo variable / secret names the CI workflow and the
+  local ``build.ps1 -Sign`` flow read.  Renaming them means touching the
+  workflow, the scripts and the docs — hence the constants.
+
+Run as a script to expose values to PowerShell (which cannot import the app
+package cheaply)::
+
+    python packaging/build_info.py --json        # everything, as JSON
+    python packaging/build_info.py MSI_VERSION   # one value, plain text
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from jautomatic import __version__ as APP_VERSION  # noqa: E402
+
+# --------------------------------------------------------------------------- #
+# product identity (must match packaging/jautomatic.wxs)
+# --------------------------------------------------------------------------- #
+APP_NAME = "JAUTOMATIC"
+PRODUCT_NAME = "JAUTOMATIC JOB SEARCH"
+MANUFACTURER = "JAUTOMATIC"
+INSTALL_SUBDIR = "JAUTOMATIC"
+EXE_NAME = "jautomatic.exe"
+MSI_BASENAME = "JAUTOMATIC-Setup"
+
+# --------------------------------------------------------------------------- #
+# toolchain pins
+# --------------------------------------------------------------------------- #
+# WiX Toolset, pinned.  WiX v5 left community support on 2026-02-05; we build
+# against its last servicing release (5.0.2) until the v6 bump is scheduled —
+# see packaging/README.md ("Upgrading WiX") for the two-line change.
+WIX_VERSION = "5.0.2"
+# Core WiX authoring namespace, unchanged from v4 through v7.
+WIX_NAMESPACE = "http://wixtoolset.org/schemas/v4/wxs"
+# .NET SDK major line the windows-installer workflow installs (wix is a
+# .NET tool, so any supported SDK that can run it will do).
+DOTNET_VERSION = "8.0.x"
+
+# --------------------------------------------------------------------------- #
+# Azure Artifact Signing (formerly "Trusted Signing") wiring
+# --------------------------------------------------------------------------- #
+# GitHub repo *variables* (public, non-secret): the signing account locator.
+SIGN_VAR_ENDPOINT = "AZURE_SIGNING_ENDPOINT"
+SIGN_VAR_ACCOUNT = "AZURE_SIGNING_ACCOUNT"
+SIGN_VAR_PROFILE = "AZURE_SIGNING_PROFILE"
+# GitHub repo *secrets*: the OIDC app registration CI authenticates with.
+SIGN_SECRET_CLIENT_ID = "AZURE_CLIENT_ID"
+SIGN_SECRET_TENANT_ID = "AZURE_TENANT_ID"
+SIGN_SECRET_SUBSCRIPTION_ID = "AZURE_SUBSCRIPTION_ID"
+# Timestamps are non-negotiable: Artifact Signing certificates live ~72 hours,
+# so an untimestamped signature would read as expired within days.
+SIGN_TIMESTAMP_URL = "http://timestamp.acs.microsoft.com"
+# Client bits used by the *local* build.ps1 -Sign flow (CI uses the official
+# azure/artifact-signing-action instead and needs none of this).
+SIGN_DLIB_PACKAGE = "Microsoft.Trusted.Signing.Client"
+
+
+def msi_version(version: str = APP_VERSION) -> str:
+    """App version cleaned up for MSI ``ProductVersion`` (``major.minor.build``).
+
+    Windows Installer ignores a fourth field and rejects anything that is not
+    numeric, so pre-release suffixes are stripped: ``1.2.0rc1`` → ``1.2.0``.
+    """
+    parts = re.findall(r"\d+", version)[:3]
+    parts += ["0"] * (3 - len(parts))
+    major, minor, build = (min(int(p), 65534) for p in parts)
+    return f"{major}.{minor}.{build}"
+
+
+def msi_filename(version: str = APP_VERSION, arch: str = "x64") -> str:
+    """``JAUTOMATIC-Setup-1.0.0-x64.msi`` — the artefact name CI uploads."""
+    return f"{MSI_BASENAME}-{version}-{arch}.msi"
+
+
+def dotnet_tools_pin() -> str | None:
+    """The ``wix`` version pinned in ``.config/dotnet-tools.json`` (if any)."""
+    manifest = Path(__file__).resolve().parent.parent / ".config" / "dotnet-tools.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tools = data.get("tools", {})
+    entry = tools.get("wix", {})
+    return entry.get("version")
+
+
+def pins_in_sync() -> bool:
+    """True when the dotnet tool manifest agrees with :data:`WIX_VERSION`."""
+    return dotnet_tools_pin() == WIX_VERSION
+
+
+def version_info_text(version: str = APP_VERSION) -> str:
+    """PyInstaller ``version=`` file: what Explorer shows for jautomatic.exe."""
+    nums = tuple(int(p) for p in msi_version(version).split(".")) + (0,)
+    dotted = ".".join(str(n) for n in nums)
+    return f"""# UTF-8
+# GENERATED by packaging/build_info.py --write-version-info — do not edit.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={nums},
+    prodvers={nums},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          u'040904B0',
+          [
+            StringStruct(u'CompanyName', u'{MANUFACTURER}'),
+            StringStruct(u'FileDescription', u'{PRODUCT_NAME}'),
+            StringStruct(u'FileVersion', u'{dotted}'),
+            StringStruct(u'InternalName', u'jautomatic'),
+            StringStruct(u'LegalCopyright', u'\\u00a9 {MANUFACTURER}'),
+            StringStruct(u'OriginalFilename', u'{EXE_NAME}'),
+            StringStruct(u'ProductName', u'{PRODUCT_NAME}'),
+            StringStruct(u'ProductVersion', u'{dotted}'),
+          ]
+        ),
+      ]
+    ),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
+"""
+
+
+def write_version_info(path: str | Path, version: str = APP_VERSION) -> Path:
+    """Write the PyInstaller version resource file, return its path."""
+    target = Path(path)
+    target.write_text(version_info_text(version), encoding="utf-8")
+    return target
+
+
+def as_dict() -> dict[str, str]:
+    return {
+        "APP_NAME": APP_NAME,
+        "PRODUCT_NAME": PRODUCT_NAME,
+        "MANUFACTURER": MANUFACTURER,
+        "APP_VERSION": APP_VERSION,
+        "MSI_VERSION": msi_version(),
+        "MSI_FILENAME": msi_filename(),
+        "WIX_VERSION": WIX_VERSION,
+        "WIX_NAMESPACE": WIX_NAMESPACE,
+        "DOTNET_VERSION": DOTNET_VERSION,
+        "SIGN_VAR_ENDPOINT": SIGN_VAR_ENDPOINT,
+        "SIGN_VAR_ACCOUNT": SIGN_VAR_ACCOUNT,
+        "SIGN_VAR_PROFILE": SIGN_VAR_PROFILE,
+        "SIGN_TIMESTAMP_URL": SIGN_TIMESTAMP_URL,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="build_info.py", description=__doc__)
+    parser.add_argument("key", nargs="?",
+                        help="print a single value (e.g. MSI_VERSION)")
+    parser.add_argument("--json", action="store_true", help="print everything as JSON")
+    parser.add_argument("--check", action="store_true",
+                        help="fail unless the WiX pins agree with each other")
+    parser.add_argument("--write-version-info", metavar="PATH", default=None,
+                        help="write the PyInstaller version resource file and exit")
+    args = parser.parse_args(argv)
+
+    if args.write_version_info:
+        print(write_version_info(args.write_version_info))
+        return 0
+    if args.check:
+        pin = dotnet_tools_pin()
+        if pin != WIX_VERSION:
+            print(f"WiX pin mismatch: build_info pins {WIX_VERSION} but "
+                  f".config/dotnet-tools.json pins {pin}", file=sys.stderr)
+            return 1
+        print(f"pins agree: WiX {WIX_VERSION}")
+        return 0
+    if args.json:
+        print(json.dumps(as_dict(), indent=2))
+        return 0
+    if args.key:
+        values = as_dict()
+        if args.key not in values:
+            print(f"unknown key: {args.key} (see --json)", file=sys.stderr)
+            return 2
+        print(values[args.key])
+        return 0
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

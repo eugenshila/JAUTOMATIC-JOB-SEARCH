@@ -13,6 +13,7 @@ from jautomatic.services.application_pipeline import ApplicationPipeline, MatchR
     TrackedApplication
 from jautomatic.services.calendar_export import (CalendarEvent, build_calendar, escape_text,
                                                  events_for, fold_line, parse_when, unfold)
+from tests.support import WorkspaceTestCase
 
 
 def python_job(**overrides) -> JobPosting:
@@ -193,12 +194,10 @@ class EventDerivationTests(unittest.TestCase):
         self.assertEqual(first, second)
 
 
-class PipelineCalendarTests(unittest.TestCase):
+class PipelineCalendarTests(WorkspaceTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
+        super().setUp()
         self.pipeline = ApplicationPipeline(self.workspace, self.workspace.load_settings())
-        self.addCleanup(self.tmp.cleanup)
 
     def _tracked_sent_application(self) -> Application:
         job = python_job()
