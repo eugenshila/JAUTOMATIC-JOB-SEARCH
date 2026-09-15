@@ -115,9 +115,9 @@ The WiX Toolset version is pinned in exactly two places that must agree
 1. `WIX_VERSION` in `packaging/build_info.py`
 2. the `wix` entry in `.config/dotnet-tools.json`
 
-We currently build against **5.0.2** — the last v5 servicing release. Note
+We currently build against **6.0.2** (WiX v6 servicing line). Note
 that WiX v5 left community support on **2026-02-05** (v6 went supported in
-its place; v6.0.2 and v7.0.0 are the current servicing lines). The v6 bump
+its place; v6.0.2 and v7.0.0 are the current servicing lines). The bump
 is a deliberate two-line change plus a verify run:
 
 1. Set both pins above to the target version (e.g. `6.0.2`).

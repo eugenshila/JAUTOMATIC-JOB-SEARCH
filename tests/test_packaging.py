@@ -507,5 +507,15 @@ class DocsDisclosureTest(unittest.TestCase):
             self.assertIn(phrase, guide)
 
 
+class ReleasePreflightTest(unittest.TestCase):
+    def test_release_preflight_tool_passes(self):
+        spec = importlib.util.spec_from_file_location(
+            "check_release", ROOT / "tools" / "check_release.py")
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertEqual(module.main(), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

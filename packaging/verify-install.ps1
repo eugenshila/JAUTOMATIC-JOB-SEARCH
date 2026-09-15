@@ -6,7 +6,7 @@
   The acceptance test for the installer, run by CI after every packaging run
   and by hand before a release:
 
-      packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.0.0-x64.msi
+      packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.1.0-x64.msi
 
   Checks, in order:
     1. msiexec installs the package cleanly (exit 0, verbose log kept).

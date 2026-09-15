@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  JAUTOMATIC JOB SEARCH — WiX installer shell (built with WiX v5.0.2, see
+  JAUTOMATIC JOB SEARCH — WiX installer shell (built with WiX v6.0.2, see
   packaging/build_info.py WIX_VERSION and .config/dotnet-tools.json).
 
   This file holds the hand-written half of the installer: product identity,
