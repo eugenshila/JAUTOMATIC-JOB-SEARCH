@@ -126,22 +126,28 @@ class InstallerShellTest(unittest.TestCase):
         self.assertEqual(len(upgrades), 1)
         self.assertTrue(upgrades[0].get("DowngradeErrorMessage"))
 
+    def _standard_directories(self) -> dict:
+        return {element.get("Id"): element
+                for element in self.root.findall("w:Package/w:StandardDirectory", self.ns)}
+
     def test_install_root_is_the_64_bit_program_files_folder(self):
         # ProgramFilesFolder resolves to "Program Files (x86)" on x64 machines
         # even for -arch x64 packages whose components are Bitness="always64";
         # verify-install.ps1 and docs/install-windows.md both expect
         # %ProgramFiles%\JAUTOMATIC, and the app is a 64-bit Qt bundle.
-        parent = self.root.find(
-            "w:Package/w:StandardDirectory[w:Directory[@Id='INSTALLFOLDER']]", self.ns)
-        self.assertIsNotNone(parent)
-        self.assertEqual(parent.get("Id"), "ProgramFiles64Folder")
+        directories = self._standard_directories()
+        self.assertIn("ProgramFiles64Folder", directories)
+        children = [child.get("Id")
+                    for child in directories["ProgramFiles64Folder"].findall("w:Directory", self.ns)]
+        self.assertIn("INSTALLFOLDER", children)
 
     def test_start_menu_folder_is_machine_wide(self):
         # perMachine install -> ProgramMenuFolder is the shared Start Menu.
-        parent = self.root.find(
-            "w:Package/w:StandardDirectory[w:Directory[@Id='ApplicationProgramsFolder']]", self.ns)
-        self.assertIsNotNone(parent)
-        self.assertEqual(parent.get("Id"), "ProgramMenuFolder")
+        directories = self._standard_directories()
+        self.assertIn("ProgramMenuFolder", directories)
+        children = [child.get("Id")
+                    for child in directories["ProgramMenuFolder"].findall("w:Directory", self.ns)]
+        self.assertIn("ApplicationProgramsFolder", children)
 
     def test_media_is_embedded(self):
         media = self.root.find("w:Package/w:Media", self.ns)
