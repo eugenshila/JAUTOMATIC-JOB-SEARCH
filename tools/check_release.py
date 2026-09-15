@@ -15,13 +15,29 @@ import os
 import re
 import struct
 import sys
+import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import jautomatic
-from packaging import build_info, gen_icon
+
+
+def _load_packaging_module(name: str):
+    # `packaging/` is deliberately not a Python package to avoid shadowing
+    # PyPI's `packaging` library installed in virtualenvs. Load by file path.
+    path = ROOT / "packaging" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"jautomatic_pkg_{name}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+build_info = _load_packaging_module("build_info")
+gen_icon = _load_packaging_module("gen_icon")
 
 
 def check_version_consistency() -> list[str]:
