@@ -150,6 +150,8 @@ class DashboardTab(QWidget):
             ("Autopilot: prepare top matches", "Generate CVs for the best matches above the "
              "autopilot threshold", self._run_autopilot, "default"),
             ("Export tracker to CSV", "Applications + status + documents", self._export_csv, "default"),
+            ("Export calendar (.ics)", "Interviews + follow-ups for Google/Outlook/Apple Calendar",
+             self._export_calendar, "default"),
             ("Open data folder", "Profile, settings, documents, database", self._open_data_dir, "ghost"),
         ]:
             widget = th.button(text, role, tip, handler)
@@ -363,6 +365,14 @@ class DashboardTab(QWidget):
 
         self.ctx.run_task("Exporting tracker CSV",
                           lambda: self.ctx.pipeline.export_tracker_csv(self.ctx.profile), done)
+
+    def _export_calendar(self) -> None:
+        def done(path) -> None:  # noqa: ANN001
+            self.ctx.notify(f"Calendar exported to {path}", "success")
+            th.open_path(path)
+
+        self.ctx.run_task("Exporting calendar (.ics)",
+                          lambda: self.ctx.pipeline.export_calendar_ics(self.ctx.profile), done)
 
     def _open_data_dir(self) -> None:
         if not th.open_in_file_manager(self.ctx.workspace.root):

@@ -18,10 +18,12 @@ from __future__ import annotations
 import csv
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from ..models import (DEFAULT_FOLLOW_UP_DAYS, Application, ApplicationStatus, JobPosting,
                       Profile, Workspace, keywords, now_iso, parse_date, today_iso)
+from .calendar_export import build_calendar, events_for, parse_when
 from .cover_letter import CoverLetterService, MatchContext
 from .cv_generator import CVGenerator, GeneratedDocument
 from .email_drafter import EmailDrafter, render_follow_up
@@ -419,6 +421,33 @@ class ApplicationPipeline:
         application.schedule_follow_up(days)
         return self.workspace.save_application(application)
 
+    def set_interview(self, application: Application | str, when: str,
+                      note: str = "") -> Application:
+        """Store (or clear, with an empty string) the interview date/time.
+
+        Accepts "YYYY-MM-DD" for all-day and "YYYY-MM-DD HH:MM" for timed
+        interviews - the calendar export honours both.
+        """
+        record = (self.workspace.get_application(application)
+                  if isinstance(application, str) else application)
+        if record is None:
+            raise KeyError(f"unknown application: {application}")
+        text = (when or "").strip()
+        parsed = parse_when(text)
+        if text and parsed is None:
+            raise ValueError(f"Unrecognised date/time “{text}” — use e.g. 2026-09-22 14:30.")
+        if parsed is None:
+            had_value = bool(record.interview_at)
+            record.interview_at = ""
+            if had_value:
+                record.log("interview date cleared")
+        else:
+            record.interview_at = (parsed.strftime("%Y-%m-%d %H:%M")
+                                   if isinstance(parsed, datetime) else parsed.isoformat())
+            record.log("interview scheduled",
+                       f"{record.interview_at}{f' — {note}' if note else ''}")
+        return self.workspace.save_application(record)
+
     # -- reporting --------------------------------------------------------- #
     def export_tracker_csv(self, profile: Profile | None = None,
                            path: Path | None = None) -> Path:
@@ -428,18 +457,30 @@ class ApplicationPipeline:
         with target.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["Title", "Company", "Location", "Remote", "Source", "Score", "Status",
-                             "Created", "Sent", "Follow-up", "Salary", "URL", "CV", "Cover letter",
-                             "Email", "Notes"])
+                             "Created", "Sent", "Follow-up", "Interview", "Salary", "URL", "CV",
+                             "Cover letter", "Email", "Notes"])
             for row in rows:
                 app = row.application
                 writer.writerow([
                     row.job.title, row.job.company, row.job.location, "yes" if row.job.remote else "no",
                     row.job.source, row.score, app.status_enum.label, app.created_at,
-                    app.sent_at, app.follow_up_at, row.job.salary_text, row.job.url,
+                    app.sent_at, app.follow_up_at, app.interview_at, row.job.salary_text, row.job.url,
                     Path(app.cv_path).name if app.cv_path else "",
                     Path(app.cover_letter_path).name if app.cover_letter_path else "",
                     Path(app.email_path).name if app.email_path else "",
                     re.sub(r"\s+", " ", app.notes).strip()])
+        return target
+
+    def export_calendar_ics(self, profile: Profile | None = None, path: Path | None = None,
+                            include_follow_ups: bool = True,
+                            include_interviews: bool = True) -> Path:
+        """Write interviews + follow-ups as an RFC 5545 ``.ics`` calendar file."""
+        rows = self.tracker(profile)
+        events = events_for(rows, include_follow_ups=include_follow_ups,
+                            include_interviews=include_interviews)
+        target = Path(path) if path else self.workspace.exports_dir / f"calendar_{today_iso()}.ics"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(build_calendar(events), encoding="utf-8")
         return target
 
     def dashboard_stats(self, profile: Profile | None = None) -> dict:

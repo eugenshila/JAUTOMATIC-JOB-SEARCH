@@ -13,7 +13,7 @@ from ..models import ApplicationStatus
 from ..services.application_pipeline import TrackedApplication
 from . import theme as th
 
-COLUMNS = ["Status", "Score", "Role", "Company", "Follow-up", "Docs"]
+COLUMNS = ["Status", "Score", "Role", "Company", "Follow-up", "Interview", "Docs"]
 
 
 class ApplicationsTab(QWidget):
@@ -67,6 +67,9 @@ class ApplicationsTab(QWidget):
                                     "Generate materials for the best untouched matches",
                                     self._autopilot))
         actions.addWidget(th.button("Export CSV", "ghost", "", self._export))
+        actions.addWidget(th.button("Export calendar (.ics)", "ghost",
+                                    "Interviews and follow-ups for Google/Outlook/Apple Calendar",
+                                    self._export_calendar))
         actions.addStretch(1)
         self.count_label = th.label("", "small")
         actions.addWidget(self.count_label)
@@ -87,11 +90,13 @@ class ApplicationsTab(QWidget):
         self.table.setSortingEnabled(False)
         self.table.itemSelectionChanged.connect(self._show_selected)
         header = self.table.horizontalHeader()
+        header.setMinimumSectionSize(70)     # floor so columns never squash to illegibility
         header.setSectionResizeMode(2, QHeaderView.Stretch)          # role breathes
-        for column in (0, 1, 3, 4, 5):
+        for column in (0, 1, 3, 4, 5, 6):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self.table.setColumnWidth(3, 170)
         self.table.setColumnWidth(4, 110)
+        self.table.setColumnWidth(5, 110)
         self.table.setMinimumWidth(430)
         table_card.add(self.table)
         splitter.addWidget(table_card)
@@ -113,9 +118,18 @@ class ApplicationsTab(QWidget):
         status_row.addWidget(self.status_combo, 1)
         status_row.addWidget(th.button("Apply", "primary", "Update the status and log it",
                                        self._apply_status))
+        interview_row = QHBoxLayout()
+        self.interview_edit = QLineEdit()
+        self.interview_edit.setPlaceholderText("e.g. 2026-09-22 14:30 — leave blank to clear")
+        interview_row.addWidget(th.label("Interview", "muted"))
+        interview_row.addWidget(self.interview_edit, 1)
+        interview_row.addWidget(th.button("Save", "default",
+                                          "Store the interview date/time (also lands in the "
+                                          "calendar export)", self._save_interview))
         detail_card.add_layout(title_row)
         detail_card.add(self.detail_meta)
         detail_card.add_layout(status_row)
+        detail_card.add_layout(interview_row)
 
         detail_card.add(th.button("Generate materials", "primary",
                                   "Write a tailored CV, cover letter and e-mail draft",
@@ -215,8 +229,9 @@ class ApplicationsTab(QWidget):
             if app.follow_up_due:
                 follow += "  ⚠"
             self.table.setItem(index, 4, QTableWidgetItem(follow))
+            self.table.setItem(index, 5, QTableWidgetItem(app.interview_at[:10] or "—"))
             documents = sum(1 for _, path in app.documents if path and Path(path).exists())
-            self.table.setItem(index, 5, QTableWidgetItem(f"{documents}/3"))
+            self.table.setItem(index, 6, QTableWidgetItem(f"{documents}/3"))
             if selected_id and app.application_id == selected_id:
                 select_row = index
         self.table.resizeRowsToContents()
@@ -244,6 +259,7 @@ class ApplicationsTab(QWidget):
         self.status_chip.setVisible(False)
         self.detail_title.setText("No applications match the filters")
         self.detail_meta.setText("")
+        self.interview_edit.setText("")
         self.notes.setPlainText("")
         self.history.setHtml("")
 
@@ -260,6 +276,8 @@ class ApplicationsTab(QWidget):
             bits.append(f"sent {app.sent_at[:10]}")
         if app.follow_up_at:
             bits.append(f"follow-up {app.follow_up_at}")
+        if app.interview_at:
+            bits.append(f"interview {app.interview_at}")
         if app.follow_up_due:
             bits.append("FOLLOW-UP DUE")
         self.detail_meta.setText(" · ".join(b for b in bits if b))
@@ -267,6 +285,8 @@ class ApplicationsTab(QWidget):
         self.status_chip.set_status(row.status)
         index = self.status_combo.findData(app.status)
         self.status_combo.setCurrentIndex(max(0, index))
+        if self.interview_edit.text() != app.interview_at:
+            self.interview_edit.setText(app.interview_at)
         if self.notes.toPlainText() != app.notes:
             self.notes.setPlainText(app.notes)
         self._render_history(row)
@@ -404,6 +424,20 @@ class ApplicationsTab(QWidget):
         self.ctx.run_task("Autopilot preparing materials",
                           lambda: self.ctx.pipeline.autopilot(self.ctx.profile), done)
 
+    def _save_interview(self) -> None:
+        row = self._current()
+        if row is None:
+            return
+        text = self.interview_edit.text().strip()
+        try:
+            self.ctx.pipeline.set_interview(row.application, text)
+        except ValueError as exc:
+            self.ctx.notify(str(exc), "warning")
+            return
+        self.ctx.notify(f"Interview for {row.title} saved." if text
+                        else f"Interview date cleared for {row.title}.", "success")
+        self.refresh()
+
     def _export(self) -> None:
         def done(path) -> None:  # noqa: ANN001
             self.ctx.notify(f"Exported {path}", "success")
@@ -411,6 +445,14 @@ class ApplicationsTab(QWidget):
 
         self.ctx.run_task("Exporting tracker CSV",
                           lambda: self.ctx.pipeline.export_tracker_csv(self.ctx.profile), done)
+
+    def _export_calendar(self) -> None:
+        def done(path) -> None:  # noqa: ANN001
+            self.ctx.notify(f"Calendar exported to {path}", "success")
+            th.open_path(path)
+
+        self.ctx.run_task("Exporting calendar (.ics)",
+                          lambda: self.ctx.pipeline.export_calendar_ics(self.ctx.profile), done)
 
 
 __all__ = ["ApplicationsTab", "COLUMNS"]

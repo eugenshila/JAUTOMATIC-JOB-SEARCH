@@ -73,6 +73,11 @@ def run_selftest(data_dir: str | None = None) -> int:
     csv_path = pipeline.export_tracker_csv(profile)
     assert csv_path.exists() and csv_path.stat().st_size > 0
 
+    ics_path = pipeline.export_calendar_ics(profile)
+    ics_text = ics_path.read_text(encoding="utf-8")
+    assert ics_path.exists() and ics_text.startswith("BEGIN:VCALENDAR"), "ICS export missing header"
+    assert "BEGIN:VEVENT" in ics_text and "END:VCALENDAR" in ics_text, "ICS export has no events"
+
     assert render_email(profile, best.job).subject
     assert render_follow_up(profile, best.job).subject
 
@@ -83,6 +88,7 @@ def run_selftest(data_dir: str | None = None) -> int:
     print(f"documents      : {', '.join(Path(p).name for p in materials.paths)}")
     print(f"follow-up draft: {draft_path.name}")
     print(f"tracker export : {csv_path.name}")
+    print(f"calendar export: {ics_path.name} ({ics_text.count('BEGIN:VEVENT')} event(s))")
     print(f"stats          : {json.dumps(stats, default=str)}")
     workspace.close()
     print("SELFTEST OK")

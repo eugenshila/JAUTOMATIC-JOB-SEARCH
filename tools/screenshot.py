@@ -80,6 +80,10 @@ def main() -> int:
         print(f"prepared: {row.title} -> {materials.cv.filename}")
     top = window.pipeline.tracker(profile)[0]
     window.pipeline.set_status(top.application, ApplicationStatus.SENT, "seeded")
+    from datetime import date, timedelta  # noqa: E402
+
+    interview_day = (date.today() + timedelta(days=3)).strftime("%Y-%m-%d")
+    window.pipeline.set_interview(top.application, f"{interview_day} 10:00")
     window.pipeline.update_notes(top.application,
                                  "Recruiter Anna replied — technical interview Thursday 10:00.")
     window.pipeline.tracker(profile)[1].application.notes = "Take-home due next week."
@@ -177,6 +181,12 @@ def main() -> int:
     assert Path(materials.email.path).exists(), "e-mail draft was not written"
     csv_path = window.pipeline.export_tracker_csv(profile)
     assert csv_path.exists() and csv_path.stat().st_size > 200, "tracker export looks empty"
+    ics_path = window.pipeline.export_calendar_ics(profile)
+    ics_text = ics_path.read_text(encoding="utf-8")
+    assert ics_text.count("BEGIN:VEVENT") >= 2, "calendar export missed follow-up/interview events"
+    assert f"UID:{top.application.application_id}-follow-up@jautomatic" in ics_text
+    assert f"UID:{top.application.application_id}-interview@jautomatic" in ics_text
+    print(f"calendar export: {ics_path.name} ({ics_text.count('BEGIN:VEVENT')} events)")
     due = window.pipeline.follow_ups_due(profile)
     assert due, "follow-up reminder did not trigger"
     document_path, text = window.pipeline.draft_follow_up(due[0].application)

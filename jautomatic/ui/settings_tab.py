@@ -184,6 +184,9 @@ class SettingsTab(QWidget):
         data.add_layout(row)
         row_two = QHBoxLayout()
         row_two.addWidget(th.button("Export tracker CSV", "ghost", "", self._export_csv))
+        row_two.addWidget(th.button("Export calendar (.ics)", "ghost",
+                                    "Interviews + follow-ups as an iCalendar file",
+                                    self._export_calendar))
         row_two.addWidget(th.button("Clear job cache", "danger",
                                     "Delete stored postings and tracker entries", self._clear))
         data.add_layout(row_two)
@@ -319,6 +322,14 @@ class SettingsTab(QWidget):
 
         self.ctx.run_task("Exporting tracker CSV",
                           lambda: self.ctx.pipeline.export_tracker_csv(self.ctx.profile), done)
+
+    def _export_calendar(self) -> None:
+        def done(path) -> None:  # noqa: ANN001
+            self.ctx.notify(f"Calendar exported to {path}", "success")
+            th.open_path(path)
+
+        self.ctx.run_task("Exporting calendar (.ics)",
+                          lambda: self.ctx.pipeline.export_calendar_ics(self.ctx.profile), done)
 
     def _backup(self) -> None:
         target = QFileDialog.getExistingDirectory(self, "Choose a folder for the backup")

@@ -25,7 +25,7 @@ from pathlib import Path
 
 APP_NAME = "JAUTOMATIC"
 APP_SLUG = "jautomatic-job-search"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_FOLLOW_UP_DAYS = 7
 
 
@@ -595,6 +595,7 @@ class Application:
     updated_at: str = field(default_factory=now_iso)
     sent_at: str = ""
     follow_up_at: str = ""
+    interview_at: str = ""               # "YYYY-MM-DD" or "YYYY-MM-DD HH:MM"
     notes: str = ""
     cv_path: str = ""
     cover_letter_path: str = ""
@@ -635,6 +636,21 @@ class Application:
     def schedule_follow_up(self, days: int = DEFAULT_FOLLOW_UP_DAYS) -> None:
         self.follow_up_at = (date.today() + timedelta(days=days)).isoformat()
         self.log("follow-up scheduled", f"in {days} day(s)")
+
+    @property
+    def interview_scheduled(self) -> bool:
+        return bool(parse_date(self.interview_at))
+
+    def interview_fallback_date(self) -> date | None:
+        """Best-known interview day when no explicit date/time was entered.
+
+        Used by the calendar export: the day the status moved to *interview*
+        (from the history log) or, failing that, the last update day.
+        """
+        for event in self.history:
+            if event.get("event") == "status" and event.get("to") == ApplicationStatus.INTERVIEW.value:
+                return parse_date(event.get("at")) or parse_date(self.updated_at)
+        return parse_date(self.updated_at)
 
     @property
     def documents(self) -> list[tuple[str, str]]:
@@ -789,6 +805,7 @@ class Workspace:
                 updated_at        TEXT,
                 sent_at           TEXT DEFAULT '',
                 follow_up_at      TEXT DEFAULT '',
+                interview_at      TEXT DEFAULT '',
                 notes             TEXT DEFAULT '',
                 cv_path           TEXT DEFAULT '',
                 cover_letter_path TEXT DEFAULT '',
@@ -800,10 +817,16 @@ class Workspace:
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
             """
         )
+        # v1 -> v2: the interview date/time column did not exist yet.
+        columns = {row["name"] for row in cur.execute("PRAGMA table_info(applications)")}
+        if "interview_at" not in columns:
+            cur.execute("ALTER TABLE applications ADD COLUMN interview_at TEXT DEFAULT ''")
         row = cur.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if row is None:
             cur.execute("INSERT INTO meta(key, value) VALUES('schema_version', ?)",
                         (str(SCHEMA_VERSION),))
+        elif row["value"] != str(SCHEMA_VERSION):
+            cur.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
         cur.commit()
 
     # -- jobs -------------------------------------------------------------- #
@@ -868,19 +891,20 @@ class Workspace:
         application.updated_at = now_iso()
         self._conn.execute(
             """INSERT INTO applications (application_id, job_id, status, match_score, created_at,
-               updated_at, sent_at, follow_up_at, notes, cv_path, cover_letter_path, email_path,
-               history) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               updated_at, sent_at, follow_up_at, interview_at, notes, cv_path, cover_letter_path,
+               email_path, history) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(application_id) DO UPDATE SET
                  status=excluded.status, match_score=excluded.match_score,
                  updated_at=excluded.updated_at, sent_at=excluded.sent_at,
-                 follow_up_at=excluded.follow_up_at, notes=excluded.notes,
+                 follow_up_at=excluded.follow_up_at, interview_at=excluded.interview_at,
+                 notes=excluded.notes,
                  cv_path=excluded.cv_path, cover_letter_path=excluded.cover_letter_path,
                  email_path=excluded.email_path, history=excluded.history""",
             (application.application_id, application.job_id, application.status,
              application.match_score, application.created_at, application.updated_at,
-             application.sent_at, application.follow_up_at, application.notes,
-             application.cv_path, application.cover_letter_path, application.email_path,
-             json.dumps(application.history)))
+             application.sent_at, application.follow_up_at, application.interview_at,
+             application.notes, application.cv_path, application.cover_letter_path,
+             application.email_path, json.dumps(application.history)))
         self._conn.commit()
         return application
 
@@ -890,7 +914,8 @@ class Workspace:
             application_id=row["application_id"], job_id=row["job_id"], status=row["status"],
             match_score=row["match_score"] or 0, created_at=row["created_at"] or "",
             updated_at=row["updated_at"] or "", sent_at=row["sent_at"] or "",
-            follow_up_at=row["follow_up_at"] or "", notes=row["notes"] or "",
+            follow_up_at=row["follow_up_at"] or "", interview_at=row["interview_at"] or "",
+            notes=row["notes"] or "",
             cv_path=row["cv_path"] or "", cover_letter_path=row["cover_letter_path"] or "",
             email_path=row["email_path"] or "", history=json.loads(row["history"] or "[]"))
 

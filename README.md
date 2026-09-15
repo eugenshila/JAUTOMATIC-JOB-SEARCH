@@ -10,8 +10,8 @@ files on your machine.
 
 ```
 ┌────────────┐   ┌───────────────┐   ┌──────────────────┐   ┌───────────────────┐
-│ job boards │ → │ match & rank  │ → │ CV / letter /    │ → │ tracker + follow- │
-│ (4 sources)│   │ (0-100 score) │   │ e-mail generator │   │ ups + CSV export  │
+│ job boards │ → │ match & rank  │ → │ CV / letter /    │ → │ tracker, follow-  │
+│ (4 sources)│   │ (0-100 score) │   │ e-mail generator │   │ ups, CSV + .ics   │
 └────────────┘   └───────────────┘   └──────────────────┘   └───────────────────┘
 ```
 
@@ -19,7 +19,7 @@ files on your machine.
 
 **Dashboard** — postings found, tracked applications, materials ready, applications sent,
 interviews and follow-ups that are due; top matches; profile-readiness checklist; a live
-activity log; quick actions (search, demo import, autopilot, CSV export).
+activity log; quick actions (search, demo import, autopilot, CSV export, calendar export).
 
 **Profile** — identity, headline, summary, skills, languages, work experience (with
 achievement bullets), education, target titles/locations, salary floor, remote-only and
@@ -33,11 +33,13 @@ role", …). One click generates the whole application pack.
 
 **Applications** — a real tracker: status pipeline (discovered → shortlisted → materials
 ready → sent → interview → offer, plus rejected/archived), score, documents 3/3 indicator,
-follow-up date with a due warning, notes, and a full event history per application.
+follow-up date with a due warning, an interview date/time field, notes, and a full event
+history per application.
 
 **Settings** — enable/disable sources, Adzuna credentials, search defaults, document
 options (template, format, letter/e-mail toggles), autopilot thresholds, follow-up window,
-dark/light theme, and data tools (open folder, backup, CSV export, clear cache).
+dark/light theme, and data tools (open folder, backup, CSV export, calendar export, clear
+cache).
 
 **Autopilot (opt-in)** — after an import, generate materials automatically for postings
 above your score threshold, up to a per-run limit.
@@ -45,6 +47,13 @@ above your score threshold, up to a per-run limit.
 **Follow-up reminders** — marking an application as *sent* schedules a follow-up (default 7
 days). When it comes due it shows up on the dashboard with a one-click politely-worded
 follow-up e-mail; reminders can be postponed.
+
+**Calendar export (.ics)** — interviews and follow-ups become RFC 5545 calendar events you
+can drop into Google Calendar, Outlook or Apple Calendar. Interviews carry the date/time
+you enter in the tracker (all-day when you only give a day, timed otherwise, defaulting to
+one hour); follow-ups become all-day events on their due date. UIDs are stable, so
+re-importing a fresh export updates events instead of duplicating them. Available from the
+Applications tab, the dashboard quick actions and Settings → Data.
 
 | | |
 |---|---|
@@ -88,7 +97,7 @@ profile.json          your details (also editable by hand / exportable / importa
 settings.json         sources, defaults, theme
 jautomatic.sqlite3    postings + applications (SQLite, WAL)
 documents/            generated CVs, cover letters, e-mail drafts, follow-ups
-exports/              CSV tracker exports
+exports/              CSV tracker exports + .ics calendar exports
 ```
 
 Deleting the folder is a full reset — there is nothing hidden elsewhere.
@@ -152,6 +161,7 @@ jautomatic/
   services/
     job_scraper.py                   sources, query filtering, de-dup, offline fallback
     application_pipeline.py          matching, ranking, tracking, autopilot, CSV export
+    calendar_export.py               RFC 5545 .ics export (interviews + follow-ups)
     cv_generator.py                  templates + docx/md/txt exporters
     cover_letter.py                  tone-driven letter drafting
     email_drafter.py                 application + follow-up e-mails
@@ -159,7 +169,7 @@ jautomatic/
     main_window.py                   window shell, background workers, app state
     theme.py                         dark/light palettes, shared widgets
     dashboard_tab.py  profile_tab.py  job_search_tab.py  applications_tab.py  settings_tab.py
-tests/                               stdlib unittest suite (85 tests, no network)
+tests/                               stdlib unittest suite (117 tests, no network)
 tools/screenshot.py                  head-less UI driver used for the screenshots above
 tools/genstubs.py                    stub libs so PySide6 runs in headless/CI containers
 ```
@@ -167,7 +177,7 @@ tools/genstubs.py                    stub libs so PySide6 runs in headless/CI co
 ## Development
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # 85 tests, no network needed
+.venv/bin/python -m unittest discover -s tests -t .   # 117 tests, no network needed
 .venv/bin/ruff check jautomatic main.py tools tests   # lint
 .venv/bin/python main.py --selftest                   # end-to-end smoke test
 ```
