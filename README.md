@@ -55,6 +55,18 @@ one hour); follow-ups become all-day events on their due date. UIDs are stable, 
 re-importing a fresh export updates events instead of duplicating them. Available from the
 Applications tab, the dashboard quick actions and Settings → Data.
 
+**Assisted application-form autofill** — point `tools/autofill.py` at an application form
+(Greenhouse / Lever / Workday / plain HTML5 shapes) and it plans which of your profile
+values go into which fields, then types them into a real browser for you to review:
+identity, contact details, links, salary expectation, years of experience, the CV from
+your application pack, yes/no eligibility questions you have answered, and custom
+answers you keep in `profile.json` under `extra.autofill`. Ambiguous or unanswered
+fields are listed for you, EEO/disclosure questions are left alone, and password fields
+are never touched. The tool deliberately stops there: **you** log in (a persistent
+browser profile keeps you signed in) and **you** press Submit — automated login and
+auto-submission are the terms-of-service-breaching, account-banning kind of automation
+and are out of scope by design.
+
 | | |
 |---|---|
 | ![Dashboard](docs/screenshots/04-dashboard.png) | ![Job search](docs/screenshots/02-job-search.png) |
@@ -84,6 +96,16 @@ python main.py --selftest                  # head-less smoke test: models → sc
 python main.py --scrape "data engineer"    # print ranked matches, no GUI
 python main.py --scrape "python" --offline --limit 10   # demo data only, no network
 python main.py --data-dir ./data           # portable, self-contained data directory
+```
+
+The assisted autofill driver is a separate tool (the browser half needs the optional
+`playwright` dependency; the planning half is pure stdlib):
+
+```bash
+python tools/autofill.py --form tests/fixtures/forms/greenhouse.html --plan  # offline plan
+python tools/autofill.py --url https://boards.greenhouse.io/acme/jobs/123    # assisted fill
+python tools/autofill.py --url … --application <id>   # attach that application's CV/letter
+pip install playwright && playwright install chromium # one-off, enables --url
 ```
 
 ## Where your data lives
@@ -162,6 +184,8 @@ jautomatic/
     job_scraper.py                   sources, query filtering, de-dup, offline fallback
     application_pipeline.py          matching, ranking, tracking, autopilot, CSV export
     calendar_export.py               RFC 5545 .ics export (interviews + follow-ups)
+    autofill.py                      deterministic form parser, taxonomy, fill planner
+    autofill_browser.py              assisted Playwright hand-off (optional dependency)
     cv_generator.py                  templates + docx/md/txt exporters
     cover_letter.py                  tone-driven letter drafting
     email_drafter.py                 application + follow-up e-mails
@@ -169,15 +193,17 @@ jautomatic/
     main_window.py                   window shell, background workers, app state
     theme.py                         dark/light palettes, shared widgets
     dashboard_tab.py  profile_tab.py  job_search_tab.py  applications_tab.py  settings_tab.py
-tests/                               stdlib unittest suite (117 tests, no network)
+tests/                               stdlib unittest suite (146 tests, no network)
+tests/fixtures/forms/                committed ATS form fixtures for the autofill engine
 tools/screenshot.py                  head-less UI driver used for the screenshots above
+tools/autofill.py                   autofill CLI (--plan offline, --url assisted)
 tools/genstubs.py                    stub libs so PySide6 runs in headless/CI containers
 ```
 
 ## Development
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # 117 tests, no network needed
+.venv/bin/python -m unittest discover -s tests -t .   # 146 tests, no network needed
 .venv/bin/ruff check jautomatic main.py tools tests   # lint
 .venv/bin/python main.py --selftest                   # end-to-end smoke test
 ```
@@ -186,10 +212,21 @@ The scraping tests run against realistic canned payloads of every board, so the 
 no network. `tests/fixtures.py` holds those payloads — update them when a board changes
 shape.
 
+The autofill engine is tested the same way: `tests/fixtures/forms/` holds committed HTML
+captures of Greenhouse / Lever / Workday / generic application-form shapes, and
+`tests/test_autofill.py` checks the fill plan they produce (what fills, what is flagged for
+review, what is left alone). The only untested seam is the Playwright hand-off in
+`autofill_browser.py` — you can exercise everything else offline:
+
+```bash
+.venv/bin/python tools/autofill.py --form tests/fixtures/forms/greenhouse.html --plan
+```
+
 `tools/screenshot.py` additionally drives the real UI offscreen end-to-end (seeds demo data,
 runs the search tab through its worker, prepares documents, opens a preview, checks the
 follow-up reminder) and writes the PNGs used above — a useful regression check after UI
-changes.
+changes. Renders are byte-reproducible: the driver uses a fixed data directory (wiped on
+start) and a frozen clock, so two runs produce identical PNGs — `sha256sum` them to verify.
 
 Headless/CI note: PySide6 links against `libGL`, `libEGL`, `libxkbcommon` and `libdbus-1`,
 which slim containers often lack (and you cannot `apt-get install` without root). Build
@@ -208,8 +245,12 @@ Everything runs locally. The only outbound requests are the job-board queries yo
 
 ## Ideas for next steps
 
-* Real job-board scrapers with login (LinkedIn/Indeed) and application-form autofill
+* ~~Real job-board scrapers with login (LinkedIn/Indeed) and application-form autofill~~ —
+  *autofill is done* (assisted scope, see above). Logged-in scraping of LinkedIn/Indeed
+  remains deliberately unbuilt: automated login breaches their terms of service and gets
+  accounts banned, so unless someone deliberately accepts that risk, public boards remain
+  the way in.
 * More CV templates / user-supplied template files
 * Interview-prep notes and question banks per application
-* Calendar (ICS) export for interviews and follow-ups
+* ~~Calendar (ICS) export for interviews and follow-ups~~ — done
 * Installer packaging (MSI/PyInstaller) — intentionally not part of this repository yet

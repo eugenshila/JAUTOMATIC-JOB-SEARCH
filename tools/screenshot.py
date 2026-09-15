@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +23,17 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from jautomatic.models import SAMPLE_PROFILE, ApplicationStatus, Profile  # noqa: E402
 from jautomatic.ui.main_window import MainWindow  # noqa: E402
 from jautomatic.ui.theme import MarkdownPreviewDialog, apply_theme  # noqa: E402
+
+# Freeze the clock: seeded history events carry now_iso() stamps that render in
+# the activity log / event history, which used to make four of the seven PNGs
+# differ between runs by a few pixels of seconds.  (Dates derived from
+# date.today() still move across days — that part is inherent.)
+import jautomatic.models as _models  # noqa: E402
+import jautomatic.services.application_pipeline as _pipeline  # noqa: E402
+
+_FROZEN_NOW = "2026-09-15T12:00:00"
+_models.now_iso = lambda: _FROZEN_NOW
+_pipeline.now_iso = lambda: _FROZEN_NOW
 
 
 def pump(app: QApplication, ms: int = 900, until=None) -> None:  # noqa: ANN001
@@ -52,7 +62,18 @@ def main() -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    data_dir = Path(args.data_dir) if args.data_dir else Path(tempfile.mkdtemp(prefix="jautom-"))
+    # a fixed default data dir keeps renders byte-stable: the Settings and
+    # CV-preview shots show workspace.root, so a fresh mkdtemp() every run used
+    # to change 4 of the 7 PNGs without anything actually moving.  The default
+    # dir is wiped on start so reruns always render the canonical seeded state
+    # (an explicit --data-dir is left alone — that is the user's workspace).
+    import shutil
+    if args.data_dir:
+        data_dir = Path(args.data_dir)
+    else:
+        data_dir = ROOT / ".screenshot-data"
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
 
     app = QApplication(sys.argv[:1])
     window = MainWindow(data_dir=data_dir)

@@ -1,0 +1,73 @@
+<!-- Realistic, trimmed-down capture of a Workday candidate-job application
+     form: opaque generated input names, labels carried by aria-label /
+     data-automation attributes, a dated "Résumé File" upload, country selects
+     and eligibility questions.  Not a verbatim copy of any real page. -->
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Northwind Analytics — Job Application</title></head>
+<body>
+<div data-automation-id="applicationForm">
+  <form id="wd-application-form" method="post">
+
+    <div data-automation-id="legalNameSection">
+      <label for="wd-input-1">First Name</label>
+      <input type="text" id="wd-input-1" name="wid:String-17" data-automation-id="textInput"
+             aria-required="true">
+
+      <label for="wd-input-2">Last Name</label>
+      <input type="text" id="wd-input-2" name="wid:String-18" data-automation-id="textInput">
+
+      <label for="wd-input-3">Primary Email</label>
+      <input type="email" id="wd-input-3" name="wid:Email-4" data-automation-id="textInput">
+
+      <label for="wd-input-4">Mobile Phone</label>
+      <input type="tel" id="wd-input-4" name="wid:Phone-9" data-automation-id="textInput">
+    </div>
+
+    <div data-automation-id="resumeSection">
+      <label for="wd-file-1">Résumé File</label>
+      <input type="file" id="wd-file-1" name="wid:Attachment-2" required>
+    </div>
+
+    <div data-automation-id="availabilitySection">
+      <label for="wd-date-1">Earliest Start Date</label>
+      <input type="date" id="wd-date-1" name="wid:Date-11" aria-label="Earliest Start Date">
+
+      <label for="wd-select-1">Country</label>
+      <select id="wd-select-1" name="wid:Country-3">
+        <option value=""></option>
+        <option value="DEU">Germany</option>
+        <option value="USA">United States of America</option>
+        <option value="GBR">United Kingdom</option>
+        <option value="KEN">Kenya</option>
+      </select>
+    </div>
+
+    <div data-automation-id="eligibilitySection">
+      <label for="wd-select-2">Are you legally authorized to work in the country to which you are applying?</label>
+      <select id="wd-select-2" name="wid:Eligibility-7">
+        <option value=""></option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+
+      <label for="wd-select-3">Will you now or in the future require sponsorship for employment visa status?</label>
+      <select id="wd-select-3" name="wid:Sponsorship-8">
+        <option value=""></option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </div>
+
+    <div data-automation-id="compensationSection">
+      <label for="wd-input-5">Desired Salary</label>
+      <input type="number" id="wd-input-5" name="wid:Currency-12">
+    </div>
+
+    <div data-automation-id="footer">
+      <button type="button" data-automation-id="next">Next</button>
+    </div>
+  </form>
+</div>
+</body>
+</html>

@@ -1,0 +1,79 @@
+<!-- Realistic, trimmed-down capture of a Lever apply form (jobs.lever.co):
+     label-wrapped inputs, "Name / Email / Phone / Organization", a Links row
+     whose inputs are told apart only by placeholder, resume upload, and custom
+     "cards" questions.  Not a verbatim copy of any real page. -->
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Senior Python Engineer · Northwind Analytics</title></head>
+<body>
+<div class="application-form">
+  <form class="main-card" novalidate>
+
+    <div class="section">
+      <h3>Basic information</h3>
+      <div class="field">
+        <label>Name <input type="text" name="name" required></label>
+      </div>
+      <div class="field">
+        <label>Email <input type="email" name="email" required></label>
+      </div>
+      <div class="field">
+        <label>Phone <input type="tel" name="phone"></label>
+      </div>
+      <div class="field">
+        <label>Organization <input type="text" name="org"></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Links</h3>
+      <div class="field">
+        <input type="url" name="urls[]" placeholder="LinkedIn">
+      </div>
+      <div class="field">
+        <input type="url" name="urls[]" placeholder="GitHub">
+      </div>
+      <div class="field">
+        <input type="url" name="urls[]" placeholder="Portfolio">
+      </div>
+      <div class="field">
+        <input type="url" name="urls[]" placeholder="Other">
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Resume</h3>
+      <div class="field">
+        <label>Resume/CV <input type="file" name="resume" required></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Additional information</h3>
+      <div class="field">
+        <label>Additional information <textarea name="cards[additional]" rows="4"></textarea></label>
+      </div>
+      <div class="field">
+        <label>How did you hear about this position?
+          <select name="cards[19277401]">
+            <option value="">Choose an option</option>
+            <option>A colleague or friend</option>
+            <option>LinkedIn</option>
+            <option>Hacker News</option>
+            <option>Other</option>
+          </select>
+        </label>
+      </div>
+      <div class="field">
+        <label>What is your expected annual salary? <input type="text" name="cards[19277402]"></label>
+      </div>
+      <div class="field">
+        <label>Earliest start date <input type="date" name="cards[19277403]"></label>
+      </div>
+    </div>
+
+    <button type="submit">Submit application</button>
+  </form>
+</div>
+</body>
+</html>
