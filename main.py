@@ -82,6 +82,8 @@ def run_selftest(data_dir: str | None = None) -> int:
     assert render_follow_up(profile, best.job).subject
 
     stats = workspace.stats()
+    from jautomatic import runtime
+    print(f"runtime        : {runtime.runtime_tag()}")
     print(f"workspace      : {root}")
     print(f"demo postings  : {len(outcome.jobs)} ({len(created)} tracked)")
     print(f"best match     : {best.title} @ {best.company} — {best.score}/100")
@@ -145,6 +147,13 @@ def run_gui(data_dir: str | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Frozen Windows builds (packaging/): spawned child processes re-execute
+    # the bundle unless freeze_support() runs first.  Harmless everywhere else.
+    from jautomatic import runtime
+    if runtime.is_frozen():
+        import multiprocessing
+        multiprocessing.freeze_support()
+
     args = parse_args(argv)
     try:
         if args.selftest:

@@ -75,6 +75,11 @@ and are out of scope by design.
 
 ## Install & run
 
+**Windows users:** grab `JAUTOMATIC-Setup-<version>-x64.msi` from the
+[releases page](https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH/releases) and
+double-click it — details, SmartScreen notes and uninstall info are in
+[`docs/install-windows.md`](docs/install-windows.md). To run from source instead:
+
 ```bash
 git clone https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH.git
 cd JAUTOMATIC-JOB-SEARCH

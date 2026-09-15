@@ -1,0 +1,112 @@
+# Windows installer: freeze -> (sign) -> package -> (sign) -> verify.
+#
+# Every push to main, every pull request and every manual dispatch produces an
+# MSI and then installs it on the same runner (verify-install.ps1), so a WiX
+# authoring slip or a broken frozen build fails loudly here instead of on a
+# user's machine. The MSI + install report ship as run artefacts.
+#
+# Signing (releases): the two azure/artifact-signing-action rounds only run
+# when the signing account is configured — repo variables AZURE_SIGNING_ENDPOINT /
+# AZURE_SIGNING_ACCOUNT / AZURE_SIGNING_PROFILE plus secrets AZURE_CLIENT_ID /
+# AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID (OIDC app registration). Without
+# them the MSI still builds and verifies; it is simply unsigned. See
+# packaging/README.md "Signing" for setup.
+name: windows-installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # OIDC for azure/login (only used when signing is configured)
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up .NET (WiX runs as a .NET tool)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Freeze (venv, tests, PyInstaller)
+        run: packaging\build.ps1 -SkipPackage
+
+      - name: Azure login (OIDC)
+        if: >-
+          ${{ vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' &&
+              vars.AZURE_SIGNING_PROFILE != '' && secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign frozen binaries
+        if: >-
+          ${{ vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' &&
+              vars.AZURE_SIGNING_PROFILE != '' && secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist\jautomatic
+          files-folder-filter: exe,dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package (harvest + wix build)
+        run: packaging\build.ps1 -SkipFreeze -SkipTests
+
+      - name: Sign installer
+        if: >-
+          ${{ vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' &&
+              vars.AZURE_SIGNING_PROFILE != '' && secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify install
+        run: packaging\verify-install.ps1 -MsiPath dist\*.msi
+
+      - name: Upload installer
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JAUTOMATIC-Setup-x64
+          path: dist\*.msi
+
+      - name: Upload install report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-report
+          path: |
+            dist\install-report.json
+            dist\install.log
+            dist\uninstall.log
