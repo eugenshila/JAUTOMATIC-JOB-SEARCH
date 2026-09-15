@@ -42,8 +42,12 @@
     <Property Id="ARPHELPLINK" Value="https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH" />
 
-    <!-- Install layout: %ProgramFiles%\JAUTOMATIC + Start Menu\JAUTOMATIC -->
-    <StandardDirectory Id="ProgramFilesFolder">
+    <!-- Install layout: %ProgramFiles%\JAUTOMATIC + Start Menu\JAUTOMATIC.
+         ProgramFiles64Folder, not ProgramFilesFolder: on an x64 machine the
+         latter is "Program Files (x86)" even for an -arch x64 package with
+         Bitness="always64" components, and the frozen bundle is 64-bit Qt -
+         the first real install landed in the 32-bit tree because of this. -->
+    <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="JAUTOMATIC" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
