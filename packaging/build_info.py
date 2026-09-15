@@ -43,10 +43,10 @@ MSI_BASENAME = "JAUTOMATIC-Setup"
 # --------------------------------------------------------------------------- #
 # toolchain pins
 # --------------------------------------------------------------------------- #
-# WiX Toolset, pinned.  WiX v5 left community support on 2026-02-05; we build
-# against its last servicing release (5.0.2) until the v6 bump is scheduled —
-# see packaging/README.md ("Upgrading WiX") for the two-line change.
-WIX_VERSION = "5.0.2"
+# WiX Toolset, pinned.  WiX v6 (6.0.2) is the current servicing line (WiX v5
+# left community support on 2026-02-05) — see packaging/README.md
+# ("Upgrading WiX").
+WIX_VERSION = "6.0.2"
 # Core WiX authoring namespace, unchanged from v4 through v7.
 WIX_NAMESPACE = "http://wixtoolset.org/schemas/v4/wxs"
 # .NET SDK major line the windows-installer workflow installs (wix is a

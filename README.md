@@ -280,4 +280,4 @@ Everything runs locally. The only outbound requests are the job-board queries yo
   `templates/*.md` ([reference](docs/cv-templates.md))
 * ~~Interview-prep notes and question banks per application~~ — done
 * ~~Calendar (ICS) export for interviews and follow-ups~~ — done
-* Installer packaging (MSI/PyInstaller) — intentionally not part of this repository yet
+* ~~Installer packaging (MSI/PyInstaller)~~ — done: PyInstaller freeze + WiX 6 MSI installer ([docs/install-windows.md](docs/install-windows.md))

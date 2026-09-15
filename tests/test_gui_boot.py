@@ -122,14 +122,17 @@ class GuiBootTest(unittest.TestCase):
             self.app.processEvents()
             completed: list[bool] = []
             handled: list[object] = []
+            started = threading.Event()
 
             def slow() -> int:
+                started.set()
                 time.sleep(0.25)
                 completed.append(True)
                 return 42
 
             worker = window.run_task("slow task", slow, lambda result: handled.append(result))
             self.assertIsNotNone(worker)
+            self.assertTrue(started.wait(timeout=2.0), "worker thread must start before close")
             window.close()          # must join the ~250ms task, not race past it
             self.app.processEvents()  # deliver any queued signals
             self.assertEqual(completed, [True], "a running worker is joined, never abandoned")
