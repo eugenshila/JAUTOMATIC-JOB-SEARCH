@@ -56,6 +56,7 @@ $DistDir = Join-Path $RepoRoot "dist"
 $FrozenDir = Join-Path $DistDir "jautomatic"
 $VenvDir = Join-Path $RepoRoot ".venv-packaging"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$IconPath = Join-Path $PackagingDir "jautomatic.ico"
 $LogDir = Join-Path $RepoRoot "build\logs"
 
 function Invoke-Logged {
@@ -272,6 +273,7 @@ function Invoke-Package($Info) {
             & dotnet wix build -arch $Arch `
                 -d "ProductVersion=$($Info.MSI_VERSION)" `
                 -d "FrozenDir=$FrozenDir" `
+                -d "IconPath=$IconPath" `
                 -out $msiPath `
                 (Join-Path $PackagingDir "jautomatic.wxs") `
                 (Join-Path $PackagingDir "files.wxs")

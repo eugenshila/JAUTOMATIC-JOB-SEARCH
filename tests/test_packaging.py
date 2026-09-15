@@ -152,10 +152,18 @@ class InstallerShellTest(unittest.TestCase):
         self.assertEqual(len(keyed), 1)
         self.assertEqual(keyed[0].get("Root"), "HKLM")
 
-    def test_icon_files_exist(self):
+    def test_icon_is_passed_as_an_absolute_compiler_input(self):
+        # WiX resolves relative source paths against its binder input paths and
+        # the current working directory - not against the .wxs file - so the
+        # icon is handed over by absolute path (build.ps1 knows the directory;
+        # the file still lives next to this shell).
         icon = self.root.find("w:Package/w:Icon", self.ns)
-        source = PACKAGING / icon.get("SourceFile")
-        self.assertTrue(source.is_file(), f"{source} missing")
+        self.assertIsNotNone(icon)
+        self.assertEqual(icon.get("SourceFile"), "$(var.IconPath)")
+        script = (PACKAGING / "build.ps1").read_text(encoding="utf-8")
+        self.assertIn('$IconPath = Join-Path $PackagingDir "jautomatic.ico"', script)
+        self.assertIn('-d "IconPath=$IconPath"', script)
+        self.assertTrue((PACKAGING / "jautomatic.ico").is_file())
 
 
 class HarvesterTest(unittest.TestCase):

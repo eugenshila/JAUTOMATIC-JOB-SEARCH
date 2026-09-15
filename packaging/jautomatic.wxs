@@ -13,6 +13,10 @@
   Build inputs (passed as -d variables by packaging/build.ps1):
     ProductVersion   3-part version from jautomatic.__version__ (1.0.0)
     FrozenDir        PyInstaller output dir (dist\jautomatic)
+    IconPath         absolute path to packaging\jautomatic.ico - WiX looks for
+                     relative source paths against its binder input paths and
+                     the current working directory, not against this file, so
+                     the icon is handed over absolute instead of by name.
 
   Upgrades: MajorUpgrade only — every release uninstalls the previous one.
   The UpgradeCode below is the product's permanent identity: it must NEVER
@@ -33,7 +37,7 @@
     <Media Id="1" Cabinet="jautomatic.cab" EmbedCab="yes" />
 
     <!-- Add/Remove Programs branding + help link -->
-    <Icon Id="AppIcon" SourceFile="jautomatic.ico" />
+    <Icon Id="AppIcon" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPHELPLINK" Value="https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH" />

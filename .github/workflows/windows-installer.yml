@@ -128,9 +128,20 @@ jobs:
         shell: pwsh
         run: |
           $logs = @("build-freeze.log", "build-package.log", "verify-install.log")
-          foreach ($log in $logs) {
-            if (-not (Test-Path $log)) { continue }
+          $reported = 0
+          $existing = @($logs | Where-Object { Test-Path $_ })
+          foreach ($log in $existing) {
             $lines = @(Get-Content $log)
+            # A stage logs "--> <what> exit code: <n>"; only the stage that
+            # actually failed (or the throw that names it) needs an annotation,
+            # so the report stays about the failure, not the whole build.
+            $failed = @($lines | Where-Object {
+                $_ -match '^--> .+ exit code: [1-9][0-9]* \(log:' -or
+                $_ -match ' failed \(exit [1-9][0-9]*\)'
+            })
+            if (-not $failed -and $reported -gt 0) { continue }
+            if (-not $failed -and $log -ne $existing[-1]) { continue }
+            $reported++
             $stage = @($lines | Where-Object { $_ -match '^--> ' } | Select-Object -Last 1)
             $tail = ($lines | Select-Object -Last 15) -join " || "
             $message = "stage=$($stage -join '') :: $tail"
