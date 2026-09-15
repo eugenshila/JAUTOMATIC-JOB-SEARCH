@@ -366,6 +366,27 @@ class WorkflowWiringTest(unittest.TestCase):
         self.assertIn("azure/artifact-signing-action", self.text)
         self.assertIn(build_info.SIGN_TIMESTAMP_URL, self.text)
 
+    def test_if_conditions_never_reference_the_secrets_context(self):
+        # GitHub rejects `secrets.*` inside an `if:` condition outright
+        # ("Unrecognized named-value: 'secrets'") and the run dies at
+        # workflow-file validation with zero jobs — a failure this test suite,
+        # running off-Windows, can and must catch. Secrets belong in env:/with:;
+        # conditions test the env name instead (see the AZURE_CLIENT_ID env var).
+        lines = self.text.splitlines()
+        for index, line in enumerate(lines):
+            stripped = line.lstrip()
+            if not stripped.startswith("if:"):
+                continue
+            indent = len(line) - len(stripped)
+            block = [stripped[len("if:"):]]
+            cursor = index + 1  # folded scalars continue deeper-indented
+            while (cursor < len(lines) and lines[cursor].strip()
+                   and (len(lines[cursor]) - len(lines[cursor].lstrip())) > indent):
+                block.append(lines[cursor].strip())
+                cursor += 1
+            self.assertNotIn("secrets.", " ".join(block),
+                             f"if: at workflow line {index + 1} uses the secrets context")
+
     def test_dotnet_line_matches_build_info(self):
         self.assertIn(f'"{build_info.DOTNET_VERSION}"', self.text)
 

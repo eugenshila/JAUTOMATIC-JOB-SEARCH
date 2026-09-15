@@ -18,6 +18,8 @@
     5. The HKLM install marker holds the installed version.
     6. The installed exe passes `jautomatic.exe --selftest` (real end-to-end:
        models, demo import, scoring, all four document generators, CSV + ICS).
+       The exe is a windowed build with no stdout, so this asserts on the exit
+       code plus the workspace artefacts the selftest writes, not on output.
     7. msiexec uninstalls cleanly; program files, shortcut and ARP entry are gone.
     8. User data survives the uninstall (a canary file in %APPDATA%\JAUTOMATIC
        must still be there — uninstalling never deletes your profile).
@@ -140,10 +142,28 @@ $smokeOk = $false
 $smokeDetail = "skipped (no installed exe)"
 if (Test-Path $Exe) {
     try {
+        # NOTE: jautomatic.exe is a windowed (console=False) build, so it has
+        # NO stdout on Windows — the "SELFTEST OK" line never reaches this
+        # script either way. Assert on the exit code plus the workspace the
+        # selftest writes, and keep whatever output exists for diagnostics.
         $smokeOut = & $Exe --selftest --data-dir $smokeDir 2>&1 | Out-String
-        $smokeOk = ($LASTEXITCODE -eq 0) -and ($smokeOut -match "SELFTEST OK") `
-            -and ($smokeOut -match "runtime\s+:\s+frozen")
-        $smokeDetail = "exit=$LASTEXITCODE frozen_build=$($smokeOut -match 'frozen')"
+        $exitOk = ($LASTEXITCODE -eq 0)
+        $docsDir = Join-Path $smokeDir "documents"
+        $exportsDir = Join-Path $smokeDir "exports"
+        $docs = if (Test-Path $docsDir) { @(Get-ChildItem $docsDir -File) } else { @() }
+        $csv = if (Test-Path $exportsDir) {
+            @(Get-ChildItem $exportsDir -Filter "applications_*.csv" -File)
+        } else { @() }
+        $ics = if (Test-Path $exportsDir) {
+            @(Get-ChildItem $exportsDir -Filter "calendar_*.ics" -File)
+        } else { @() }
+        $dbOk = Test-Path (Join-Path $smokeDir "jautomatic.sqlite3")
+        # CV + cover letter + e-mail + follow-up draft = 4 documents
+        $smokeOk = $exitOk -and ($docs.Count -ge 4) -and ($csv.Count -eq 1) `
+            -and ($ics.Count -eq 1) -and $dbOk
+        $smokeDetail = ("exit=$LASTEXITCODE docs=$($docs.Count) csv=$($csv.Count) " +
+            "ics=$($ics.Count) db=$dbOk (windowed exe: no stdout by design)" +
+            $(if ($smokeOut.Trim()) { " out=" + $smokeOut.Trim().Substring(0, [Math]::Min(120, $smokeOut.Trim().Length)) } else { "" }))
     } catch {
         $smokeDetail = "selftest crashed: $($_.Exception.Message)"
     } finally {

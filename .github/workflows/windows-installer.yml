@@ -30,6 +30,11 @@ jobs:
       AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
       AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
       AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+      # Secrets may not be referenced in `if:` conditions (GitHub rejects the
+      # workflow file outright — "Unrecognized named-value: 'secrets'"), so the
+      # client id lands in an env var and the conditions below test that name.
+      # It never leaves the runner: only azure/login consumes it, via `with:`.
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
 
     steps:
       - name: Checkout
@@ -50,8 +55,8 @@ jobs:
 
       - name: Azure login (OIDC)
         if: >-
-          ${{ vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' &&
-              vars.AZURE_SIGNING_PROFILE != '' && secrets.AZURE_CLIENT_ID != '' }}
+          ${{ env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' &&
+              env.AZURE_SIGNING_PROFILE != '' && env.AZURE_CLIENT_ID != '' }}
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -60,8 +65,8 @@ jobs:
 
       - name: Sign frozen binaries
         if: >-
-          ${{ vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' &&
-              vars.AZURE_SIGNING_PROFILE != '' && secrets.AZURE_CLIENT_ID != '' }}
+          ${{ env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' &&
+              env.AZURE_SIGNING_PROFILE != '' && env.AZURE_CLIENT_ID != '' }}
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
@@ -78,8 +83,8 @@ jobs:
 
       - name: Sign installer
         if: >-
-          ${{ vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' &&
-              vars.AZURE_SIGNING_PROFILE != '' && secrets.AZURE_CLIENT_ID != '' }}
+          ${{ env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' &&
+              env.AZURE_SIGNING_PROFILE != '' && env.AZURE_CLIENT_ID != '' }}
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}

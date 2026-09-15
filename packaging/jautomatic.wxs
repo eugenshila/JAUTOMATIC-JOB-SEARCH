@@ -57,8 +57,10 @@
         <RemoveFolder Id="RemoveProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
         <!-- Install marker; doubles as the component key path.  HKLM on
              purpose: this key belongs to the machine-wide install and is
-             removed with it.  (The app's own per-user QSettings key under
-             HKCU is a different thing — see docs/install-windows.md.) -->
+             removed with it.  The app itself writes nothing to the registry —
+             window geometry lives in the data dir's settings.json (1.0 used
+             an HKCU QSettings key; the leftover is disclosed in
+             docs/install-windows.md). -->
         <RegistryValue Root="HKLM"
                        Key="Software\JAUTOMATIC\job-search"
                        Name="installed"
