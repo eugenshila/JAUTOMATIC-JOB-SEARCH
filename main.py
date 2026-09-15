@@ -70,6 +70,11 @@ def run_selftest(data_dir: str | None = None) -> int:
     draft_path, draft_text = pipeline.draft_follow_up(materials.application)
     assert draft_path.exists() and "Following up" in draft_text
 
+    prep, added = pipeline.generate_interview_prep(materials.application, profile)
+    assert added and prep.questions, "interview prep produced no questions"
+    prep_path = pipeline.export_interview_prep(materials.application, profile)
+    assert prep_path.exists() and "# Interview prep" in prep_path.read_text(encoding="utf-8")
+
     csv_path = pipeline.export_tracker_csv(profile)
     assert csv_path.exists() and csv_path.stat().st_size > 0
 
@@ -89,6 +94,7 @@ def run_selftest(data_dir: str | None = None) -> int:
     print(f"best match     : {best.title} @ {best.company} — {best.score}/100")
     print(f"documents      : {', '.join(Path(p).name for p in materials.paths)}")
     print(f"follow-up draft: {draft_path.name}")
+    print(f"interview prep : {prep_path.name} ({len(prep.questions)} question(s))")
     print(f"tracker export : {csv_path.name}")
     print(f"calendar export: {ics_path.name} ({ics_text.count('BEGIN:VEVENT')} event(s))")
     print(f"stats          : {json.dumps(stats, default=str)}")

@@ -13,7 +13,7 @@ from ..models import ApplicationStatus
 from ..services.application_pipeline import TrackedApplication
 from . import theme as th
 
-COLUMNS = ["Status", "Score", "Role", "Company", "Follow-up", "Interview", "Docs"]
+COLUMNS = ["Status", "Score", "Role", "Company", "Follow-up", "Interview", "Docs", "Prep"]
 
 
 class ApplicationsTab(QWidget):
@@ -92,7 +92,7 @@ class ApplicationsTab(QWidget):
         header = self.table.horizontalHeader()
         header.setMinimumSectionSize(70)     # floor so columns never squash to illegibility
         header.setSectionResizeMode(2, QHeaderView.Stretch)          # role breathes
-        for column in (0, 1, 3, 4, 5, 6):
+        for column in (0, 1, 3, 4, 5, 6, 7):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self.table.setColumnWidth(3, 170)
         self.table.setColumnWidth(4, 110)
@@ -158,7 +158,14 @@ class ApplicationsTab(QWidget):
         danger.addStretch(1)
         detail_card.add_layout(danger)
 
-        detail_card.add(th.label("Notes", "title"))
+        notes_row = QHBoxLayout()
+        notes_row.addWidget(th.label("Notes", "title"), 1)
+        self.prep_label = th.label("", "small")
+        notes_row.addWidget(self.prep_label)
+        notes_row.addWidget(th.button("Interview prep", "default",
+                                      "Notes and a question bank derived from this posting "
+                                      "and your profile", self._interview_prep))
+        detail_card.add_layout(notes_row)
         self.notes = QPlainTextEdit()
         self.notes.setPlaceholderText("Recruiter names, interview dates, salary talk, "
                                       "take-home deadlines…")
@@ -203,8 +210,9 @@ class ApplicationsTab(QWidget):
             if due_only and not row.application.follow_up_due:
                 continue
             if text:
+                prep_notes = str((row.application.prep or {}).get("notes") or "")
                 haystack = " ".join([row.title, row.company, row.job.location,
-                                     row.application.notes]).lower()
+                                     row.application.notes, prep_notes]).lower()
                 if text not in haystack:
                     continue
             filtered.append(row)
@@ -232,6 +240,12 @@ class ApplicationsTab(QWidget):
             self.table.setItem(index, 5, QTableWidgetItem(app.interview_at[:10] or "—"))
             documents = sum(1 for _, path in app.documents if path and Path(path).exists())
             self.table.setItem(index, 6, QTableWidgetItem(f"{documents}/3"))
+            prep_item = QTableWidgetItem(
+                f"{app.prep_answered_count}/{app.prep_question_count}"
+                if app.prep_question_count else ("notes" if app.has_prep else "—"))
+            prep_item.setTextAlignment(Qt.AlignCenter)
+            prep_item.setToolTip("Interview prep: answered/total questions")
+            self.table.setItem(index, 7, prep_item)
             if selected_id and app.application_id == selected_id:
                 select_row = index
         self.table.resizeRowsToContents()
@@ -259,6 +273,7 @@ class ApplicationsTab(QWidget):
         self.status_chip.setVisible(False)
         self.detail_title.setText("No applications match the filters")
         self.detail_meta.setText("")
+        self.prep_label.setText("")
         self.interview_edit.setText("")
         self.notes.setPlainText("")
         self.history.setHtml("")
@@ -281,6 +296,8 @@ class ApplicationsTab(QWidget):
         if app.follow_up_due:
             bits.append("FOLLOW-UP DUE")
         self.detail_meta.setText(" · ".join(b for b in bits if b))
+        self.prep_label.setText(f"prep {app.prep_answered_count}/{app.prep_question_count}"
+                                if app.prep_question_count else "")
         self.status_chip.setVisible(True)
         self.status_chip.set_status(row.status)
         index = self.status_combo.findData(app.status)
@@ -336,7 +353,10 @@ class ApplicationsTab(QWidget):
 
         def done(materials) -> None:  # noqa: ANN001
             self.refresh()
-            self.ctx.notify(f"Materials generated for {row.title}.", "success")
+            if materials.cv and materials.cv.warning:
+                self.ctx.notify(materials.cv.warning, "warning")
+            else:
+                self.ctx.notify(f"Materials generated for {row.title}.", "success")
             self.ctx.tabs["dashboard"].refresh()
             if materials.cv and materials.cv.text:
                 self.ctx.open_preview(f"CV · {row.title}", materials.cv.text, materials.cv.path)
@@ -355,6 +375,12 @@ class ApplicationsTab(QWidget):
                             "warning")
             return
         th.open_path(path)
+
+    def _interview_prep(self) -> None:
+        row = self._current()
+        if row is None:
+            return
+        self.ctx.open_interview_prep(row)
 
     def _follow_up(self) -> None:
         row = self._current()

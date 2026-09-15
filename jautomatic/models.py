@@ -25,7 +25,7 @@ from pathlib import Path
 
 APP_NAME = "JAUTOMATIC"
 APP_SLUG = "jautomatic-job-search"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_FOLLOW_UP_DAYS = 7
 
 
@@ -94,6 +94,17 @@ def unique_document_path(directory: str | Path, stem: str, suffix: str, *,
         candidate = directory / f"{stem}-{digest}-{counter}{suffix}"
         counter += 1
     return candidate
+
+
+def _json_dict(raw: object) -> dict:
+    """Parse a JSON object column defensively (bad/missing -> ``{}``)."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def parse_date(value: object) -> date | None:
@@ -638,6 +649,9 @@ class Application:
     cover_letter_path: str = ""
     email_path: str = ""
     history: list[dict] = field(default_factory=list)
+    # interview preparation: notes + question bank (see services/interview_prep.py)
+    prep: dict = field(default_factory=dict)
+    prep_path: str = ""                  # exported prep sheet, if any
 
     # -- status helpers ---------------------------------------------------- #
     @property
@@ -695,6 +709,22 @@ class Application:
                 ("Email", self.email_path)]
 
     @property
+    def prep_question_count(self) -> int:
+        return len(self.prep.get("questions") or []) if isinstance(self.prep, dict) else 0
+
+    @property
+    def prep_answered_count(self) -> int:
+        if not isinstance(self.prep, dict):
+            return 0
+        return sum(1 for q in (self.prep.get("questions") or [])
+                   if isinstance(q, dict) and str(q.get("answer") or "").strip())
+
+    @property
+    def has_prep(self) -> bool:
+        return bool(self.prep_question_count
+                    or (isinstance(self.prep, dict) and str(self.prep.get("notes") or "").strip()))
+
+    @property
     def has_documents(self) -> bool:
         return any(path and Path(path).exists() for _, path in self.documents)
 
@@ -707,6 +737,7 @@ class Application:
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         payload = {k: v for k, v in (data or {}).items() if k in known}
         payload["history"] = list(payload.get("history") or [])
+        payload["prep"] = dict(payload.get("prep") or {}) if isinstance(payload.get("prep"), dict) else {}
         payload["status"] = coerce_status(payload.get("status")).value
         try:
             payload["match_score"] = int(payload.get("match_score") or 0)
@@ -801,12 +832,14 @@ class Workspace:
         self.root = Path(data_dir).expanduser() if data_dir else default_data_dir()
         self.documents_dir = self.root / "documents"
         self.exports_dir = self.root / "exports"
+        self.templates_dir = self.root / "templates"      # user-supplied CV templates
         self.db_path = self.root / "jautomatic.sqlite3"
         self.profile_path = self.root / "profile.json"
         self.settings_path = self.root / "settings.json"
         self.root.mkdir(parents=True, exist_ok=True)
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         self.exports_dir.mkdir(parents=True, exist_ok=True)
+        self.templates_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -851,7 +884,9 @@ class Workspace:
                 cv_path           TEXT DEFAULT '',
                 cover_letter_path TEXT DEFAULT '',
                 email_path        TEXT DEFAULT '',
-                history           TEXT DEFAULT '[]'
+                history           TEXT DEFAULT '[]',
+                prep              TEXT DEFAULT '{}',
+                prep_path         TEXT DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id);
             CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
@@ -862,6 +897,11 @@ class Workspace:
         columns = {row["name"] for row in cur.execute("PRAGMA table_info(applications)")}
         if "interview_at" not in columns:
             cur.execute("ALTER TABLE applications ADD COLUMN interview_at TEXT DEFAULT ''")
+        # v2 -> v3: interview-prep notes/question bank + exported sheet path.
+        if "prep" not in columns:
+            cur.execute("ALTER TABLE applications ADD COLUMN prep TEXT DEFAULT '{}'")
+        if "prep_path" not in columns:
+            cur.execute("ALTER TABLE applications ADD COLUMN prep_path TEXT DEFAULT ''")
         row = cur.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if row is None:
             cur.execute("INSERT INTO meta(key, value) VALUES('schema_version', ?)",
@@ -933,19 +973,21 @@ class Workspace:
         self._conn.execute(
             """INSERT INTO applications (application_id, job_id, status, match_score, created_at,
                updated_at, sent_at, follow_up_at, interview_at, notes, cv_path, cover_letter_path,
-               email_path, history) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               email_path, history, prep, prep_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(application_id) DO UPDATE SET
                  status=excluded.status, match_score=excluded.match_score,
                  updated_at=excluded.updated_at, sent_at=excluded.sent_at,
                  follow_up_at=excluded.follow_up_at, interview_at=excluded.interview_at,
                  notes=excluded.notes,
                  cv_path=excluded.cv_path, cover_letter_path=excluded.cover_letter_path,
-                 email_path=excluded.email_path, history=excluded.history""",
+                 email_path=excluded.email_path, history=excluded.history,
+                 prep=excluded.prep, prep_path=excluded.prep_path""",
             (application.application_id, application.job_id, application.status,
              application.match_score, application.created_at, application.updated_at,
              application.sent_at, application.follow_up_at, application.interview_at,
              application.notes, application.cv_path, application.cover_letter_path,
-             application.email_path, json.dumps(application.history)))
+             application.email_path, json.dumps(application.history),
+             json.dumps(application.prep or {}), application.prep_path))
         self._conn.commit()
         return application
 
@@ -958,7 +1000,9 @@ class Workspace:
             follow_up_at=row["follow_up_at"] or "", interview_at=row["interview_at"] or "",
             notes=row["notes"] or "",
             cv_path=row["cv_path"] or "", cover_letter_path=row["cover_letter_path"] or "",
-            email_path=row["email_path"] or "", history=json.loads(row["history"] or "[]"))
+            email_path=row["email_path"] or "", history=json.loads(row["history"] or "[]"),
+            prep=_json_dict(row["prep"] if "prep" in row.keys() else None),
+            prep_path=(row["prep_path"] if "prep_path" in row.keys() else "") or "")
 
     @synchronized
     def applications(self) -> list[Application]:

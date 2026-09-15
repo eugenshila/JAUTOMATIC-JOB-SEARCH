@@ -7,7 +7,7 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from jautomatic.models import (Application, ApplicationStatus, JobPosting, Workspace,
+from jautomatic.models import (SCHEMA_VERSION, Application, ApplicationStatus, JobPosting, Workspace,
                                parse_date)
 from jautomatic.services.application_pipeline import ApplicationPipeline, MatchResult, \
     TrackedApplication
@@ -312,7 +312,7 @@ class SchemaMigrationTests(unittest.TestCase):
             version = connection.execute(
                 "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
             connection.close()
-            self.assertEqual(version, "2")
+            self.assertEqual(version, str(SCHEMA_VERSION))
         finally:
             workspace.close()
 

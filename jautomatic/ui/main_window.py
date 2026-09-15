@@ -25,6 +25,7 @@ from ..services.application_pipeline import ApplicationPipeline
 from . import theme as th
 from .applications_tab import ApplicationsTab
 from .dashboard_tab import DashboardTab
+from .interview_prep_dialog import InterviewPrepDialog
 from .job_search_tab import JobSearchTab
 from .profile_tab import ProfileTab
 from .settings_tab import SettingsTab
@@ -385,6 +386,22 @@ class MainWindow(QMainWindow):
         screen, and scripts/tests can inspect the dialog without blocking.
         """
         dialog = th.MarkdownPreviewDialog(title, markdown, path, self)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        self._previews.append(dialog)
+        dialog.destroyed.connect(lambda *_, d=dialog: self._forget_preview(d))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def open_interview_prep(self, row) -> QWidget:  # noqa: ANN001 - TrackedApplication
+        """Open (or raise) the interview-prep window for one application."""
+        for dialog in self._previews:
+            if getattr(dialog, "application_id", None) == row.application.application_id:
+                dialog.raise_()
+                dialog.activateWindow()
+                return dialog
+        dialog = InterviewPrepDialog(self, row, self)
         dialog.setAttribute(Qt.WA_DeleteOnClose)
         self._previews.append(dialog)
         dialog.destroyed.connect(lambda *_, d=dialog: self._forget_preview(d))
