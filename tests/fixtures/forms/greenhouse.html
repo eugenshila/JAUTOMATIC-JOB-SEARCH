@@ -1,0 +1,91 @@
+<!-- Realistic, trimmed-down capture of a Greenhouse "Easy Apply" application form.
+     Shapes mirror boards.greenhouse.io (candidate[...] field names, label-for
+     markup, resume upload, custom questions, EEO block) without being a verbatim
+     copy of any real page.  Used by tests/test_autofill.py and
+     `python tools/autofill.py --form ... --plan`. -->
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Senior Python Engineer · Northwind Analytics</title></head>
+<body>
+<div id="app-body">
+  <section class="application">
+    <form id="job_application_form" novalidate="novalidate" enctype="multipart/form-data">
+
+      <div class="field">
+        <label for="candidate_first_name">First Name</label>
+        <input type="text" name="candidate[first_name]" id="candidate_first_name" required>
+      </div>
+
+      <div class="field">
+        <label for="candidate_last_name">Last Name</label>
+        <input type="text" name="candidate[last_name]" id="candidate_last_name" required>
+      </div>
+
+      <div class="field">
+        <label for="candidate_email">Email</label>
+        <input type="text" name="candidate[email]" id="candidate_email" required>
+      </div>
+
+      <div class="field">
+        <label for="candidate_phone">Phone</label>
+        <input type="text" name="candidate[phone]" id="candidate_phone">
+      </div>
+
+      <div class="field">
+        <label for="resume">Resume/CV</label>
+        <input type="file" name="file" id="resume" required>
+        <p class="note">Attach your CV as a PDF or DOCX.</p>
+      </div>
+
+      <div class="field">
+        <label for="question_1900011">How did you hear about this job?</label>
+        <select name="question[1900011]" id="question_1900011">
+          <option value="">Please select</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="company_website">Company website</option>
+          <option value="referral">A friend or colleague</option>
+          <option value="job_board">Job board</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="question_1900012">Why do you want to work at Northwind?</label>
+        <textarea name="question[1900012]" id="question_1900012" rows="5"></textarea>
+      </div>
+
+      <fieldset class="custom-question">
+        <legend>Are you legally authorized to work in the United States?</legend>
+        <label for="auth_yes"><input type="radio" name="question[1900013]" id="auth_yes" value="yes"> Yes</label>
+        <label for="auth_no"><input type="radio" name="question[1900013]" id="auth_no" value="no"> No</label>
+      </fieldset>
+
+      <div class="field">
+        <label for="question_1900014">How many years of Python experience do you have?</label>
+        <input type="text" name="question[1900014]" id="question_1900014" inputmode="numeric">
+      </div>
+
+      <div class="eeoc-block">
+        <div class="field">
+          <label for="eeoc_gender">Gender ( voluntary )</label>
+          <select name="eeoc[gender]" id="eeoc_gender">
+            <option value="">Decline to self-identify</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="eeoc_race">Race ( voluntary )</label>
+          <select name="eeoc[race]" id="eeoc_race">
+            <option value="">Decline to self-identify</option>
+            <option value="1">White</option>
+            <option value="2">Asian</option>
+          </select>
+        </div>
+      </div>
+
+      <input type="submit" name="commit" value="Submit Application">
+    </form>
+  </section>
+</div>
+</body>
+</html>

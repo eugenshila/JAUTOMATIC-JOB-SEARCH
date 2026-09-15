@@ -1,0 +1,53 @@
+<!-- A bare HTML5 form with no <label> elements at all: HTML5 autocomplete
+   attributes and placeholders are the only signals, plus a relocation yes/no
+   radio pair, a login-reminder password field (must never be autofilled) and
+   a referral text input.  Represents the long tail of company career-site
+   forms. -->
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Backend Engineer</title></head>
+<body>
+<main>
+  <form action="/apply" method="post">
+    <p>Full name</p>
+    <input type="text" name="applicant_name" autocomplete="name" required>
+
+    <p>E-mail address</p>
+    <input type="email" name="contact_email" autocomplete="email" required>
+
+    <p>Phone number</p>
+    <input type="tel" name="contact_phone" autocomplete="tel-national">
+
+    <p>Where are you based?</p>
+    <input type="text" name="location" placeholder="City, Country">
+
+    <p>LinkedIn profile</p>
+    <input type="url" name="linkedin" placeholder="https://linkedin.com/in/…">
+
+    <p>Annual salary expectation (USD)</p>
+    <input type="number" name="salary" min="0" step="1000">
+
+    <p>Earliest date you could start</p>
+    <input type="date" name="start">
+
+    <p>Are you willing to relocate for this role?</p>
+    <input type="radio" id="reloc_y" name="relocate" value="yes"> <label for="reloc_y">Yes</label>
+    <input type="radio" id="reloc_n" name="relocate" value="no"> <label for="reloc_n">No</label>
+
+    <p>Were you referred by a Northwind employee? If so, who?</p>
+    <input type="text" name="referred_by">
+
+    <p>Attach your CV</p>
+    <input type="file" name="cv" accept=".pdf,.docx">
+
+    <p>Anything else we should know?</p>
+    <textarea name="notes" rows="4" placeholder="Anything else we should know?"></textarea>
+
+    <p>Create an account (optional) — password</p>
+    <input type="password" name="password" autocomplete="new-password">
+
+    <button type="submit">Send application</button>
+  </form>
+</main>
+</body>
+</html>
