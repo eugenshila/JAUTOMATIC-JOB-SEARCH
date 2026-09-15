@@ -168,19 +168,23 @@ if (Test-Path $Exe) {
         $exitOk = ($proc.ExitCode -eq 0)
         $docsDir = Join-Path $smokeDir "documents"
         $exportsDir = Join-Path $smokeDir "exports"
-        $docs = if (Test-Path $docsDir) { @(Get-ChildItem $docsDir -File) } else { @() }
-        $csv = if (Test-Path $exportsDir) {
-            @(Get-ChildItem $exportsDir -Filter "applications_*.csv" -File)
-        } else { @() }
-        $ics = if (Test-Path $exportsDir) {
-            @(Get-ChildItem $exportsDir -Filter "calendar_*.ics" -File)
-        } else { @() }
+        # Counts, not arrays: assigning "$x = if (...) { @(...) }" hands back a
+        # bare object when the pipeline yields exactly one item, and ".Count"
+        # on that raises under Set-StrictMode (it did: the CSV/ICS probes each
+        # find exactly one file). @(...).Count is always an int.
+        $docsCount = if (Test-Path $docsDir) { @(Get-ChildItem -Path $docsDir -File).Count } else { 0 }
+        $csvCount = if (Test-Path $exportsDir) {
+            @(Get-ChildItem -Path $exportsDir -Filter "applications_*.csv" -File).Count
+        } else { 0 }
+        $icsCount = if (Test-Path $exportsDir) {
+            @(Get-ChildItem -Path $exportsDir -Filter "calendar_*.ics" -File).Count
+        } else { 0 }
         $dbOk = Test-Path (Join-Path $smokeDir "jautomatic.sqlite3")
         # CV + cover letter + e-mail + follow-up draft = 4 documents
-        $smokeOk = $exitOk -and ($docs.Count -ge 4) -and ($csv.Count -eq 1) `
-            -and ($ics.Count -eq 1) -and $dbOk
-        $smokeDetail = ("exit=$($proc.ExitCode) docs=$($docs.Count) csv=$($csv.Count) " +
-            "ics=$($ics.Count) db=$dbOk (windowed exe: no stdout by design)")
+        $smokeOk = $exitOk -and ($docsCount -ge 4) -and ($csvCount -eq 1) `
+            -and ($icsCount -eq 1) -and $dbOk
+        $smokeDetail = ("exit=$($proc.ExitCode) docs=$docsCount csv=$csvCount " +
+            "ics=$icsCount db=$dbOk (windowed exe: no stdout by design)")
     } catch {
         $smokeDetail = "selftest crashed: $($_.Exception.Message)"
     } finally {

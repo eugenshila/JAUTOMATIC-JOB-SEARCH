@@ -476,6 +476,16 @@ class VerifyInstallScriptTest(unittest.TestCase):
         self.assertIn("Get-ArpEntry", self.text)
         self.assertIn('$props.PSObject.Properties["DisplayName"]', self.text)
 
+    def test_smoke_check_counts_are_ints_not_unrolled_arrays(self):
+        # "$x = if (...) { @(...) }" hands back a bare object when exactly one
+        # file matches, and ".Count" on it raises under Set-StrictMode - which
+        # is how the CSV/ICS probes reported "selftest crashed: The property
+        # 'Count' cannot be found" while every real check passed.
+        self.assertIn("@(Get-ChildItem -Path $docsDir -File).Count", self.text)
+        self.assertNotIn("$csv.Count", self.text)
+        self.assertNotIn("$ics.Count", self.text)
+        self.assertNotIn("$docs.Count", self.text)
+
     def test_failing_checks_are_summarised_on_one_line(self):
         # CI annotations carry the log tail only; a one-line summary keeps the
         # failing check names readable however long the log gets.
