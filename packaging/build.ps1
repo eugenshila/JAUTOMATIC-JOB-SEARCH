@@ -56,6 +56,38 @@ $DistDir = Join-Path $RepoRoot "dist"
 $FrozenDir = Join-Path $DistDir "jautomatic"
 $VenvDir = Join-Path $RepoRoot ".venv-packaging"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$LogDir = Join-Path $RepoRoot "build\logs"
+
+function Invoke-Logged {
+    # Run a native command with stderr merged in, tee everything into
+    # build\logs\<LogName>, and on failure throw with the tail of that log.
+    # Two reasons, both learned the hard way in CI:
+    #  1. pip, PyInstaller and unittest write progress/warnings to stderr; a
+    #     strict error policy stops on those lines before the exit code can be
+    #     inspected, which is what killed the pre-PR pipeline.
+    #  2. Annotations are single-line and the raw CI log is not always at hand,
+    #     so the information needed to name the failure travels in the message.
+    param(
+        [Parameter(Mandatory = $true)][string]$What,
+        [Parameter(Mandatory = $true)][string]$LogName,
+        [Parameter(Mandatory = $true)][scriptblock]$Run
+    )
+    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory $LogDir -Force | Out-Null }
+    $log = Join-Path $LogDir $LogName
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Run 2>&1 | Tee-Object -FilePath $log
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    Write-Host "--> $What exit code: $code (log: $log)"
+    if ($code -ne 0) {
+        $tail = @(Get-Content -Path $log -Tail 20 -ErrorAction SilentlyContinue) -join " || "
+        throw "$What failed (exit $code): $tail"
+    }
+}
 
 function Get-BuildInfo {
     # build_info.py is dependency-free (it only imports jautomatic/__init__),
@@ -69,25 +101,31 @@ function Get-BuildInfo {
 function Ensure-Venv {
     if (-not (Test-Path $VenvPython)) {
         Write-Host "--> creating build venv at $VenvDir"
-        & python -m venv $VenvDir
-        if ($LASTEXITCODE -ne 0) { throw "python -m venv failed" }
+        Invoke-Logged -What "venv creation" -LogName "venv.log" -Run {
+            & python -m venv $VenvDir
+        }
     }
     Write-Host "--> installing build dependencies"
-    & $VenvPython -m pip install --upgrade pip
-    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
-    & $VenvPython -m pip install -r (Join-Path $RepoRoot "requirements.txt")
-    if ($LASTEXITCODE -ne 0) { throw "pip install requirements failed" }
-    & $VenvPython -m pip install "pyinstaller>=6"
-    if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller failed" }
+    Invoke-Logged -What "pip upgrade" -LogName "pip-upgrade.log" -Run {
+        & $VenvPython -m pip install --upgrade pip
+    }
+    Invoke-Logged -What "pip install requirements" -LogName "pip-requirements.log" -Run {
+        & $VenvPython -m pip install -r (Join-Path $RepoRoot "requirements.txt")
+    }
+    Invoke-Logged -What "pip install pyinstaller" -LogName "pip-pyinstaller.log" -Run {
+        & $VenvPython -m pip install "pyinstaller>=6"
+    }
 }
 
 function Invoke-Tests {
     Write-Host "--> running test suite"
-    & $VenvPython -m unittest discover -s (Join-Path $RepoRoot "tests") -t $RepoRoot
-    if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+    Invoke-Logged -What "test suite" -LogName "tests.log" -Run {
+        & $VenvPython -m unittest discover -s (Join-Path $RepoRoot "tests") -t $RepoRoot
+    }
     Write-Host "--> running --selftest"
-    & $VenvPython (Join-Path $RepoRoot "main.py") --selftest
-    if ($LASTEXITCODE -ne 0) { throw "--selftest failed" }
+    Invoke-Logged -What "--selftest" -LogName "selftest.log" -Run {
+        & $VenvPython (Join-Path $RepoRoot "main.py") --selftest
+    }
 }
 
 function Invoke-Freeze($Info) {
@@ -95,15 +133,17 @@ function Invoke-Freeze($Info) {
     if (-not $SkipTests) { Invoke-Tests }
 
     Write-Host "--> writing version resource"
-    & $VenvPython (Join-Path $PackagingDir "build_info.py") `
-        --write-version-info (Join-Path $PackagingDir "version_info.txt")
-    if ($LASTEXITCODE -ne 0) { throw "version resource generation failed" }
+    Invoke-Logged -What "version resource generation" -LogName "version-info.log" -Run {
+        & $VenvPython (Join-Path $PackagingDir "build_info.py") `
+            --write-version-info (Join-Path $PackagingDir "version_info.txt")
+    }
 
     Write-Host "--> freezing with PyInstaller"
     if (-not (Test-Path $DistDir)) { New-Item -ItemType Directory $DistDir | Out-Null }
-    & $VenvPython -m PyInstaller (Join-Path $PackagingDir "jautomatic.spec") `
-        --distpath $DistDir --workpath (Join-Path $RepoRoot "build\work") --noconfirm
-    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+    Invoke-Logged -What "PyInstaller freeze" -LogName "pyinstaller.log" -Run {
+        & $VenvPython -m PyInstaller (Join-Path $PackagingDir "jautomatic.spec") `
+            --distpath $DistDir --workpath (Join-Path $RepoRoot "build\work") --noconfirm
+    }
     if (-not (Test-Path (Join-Path $FrozenDir "jautomatic.exe"))) {
         throw "freeze produced no jautomatic.exe"
     }
@@ -211,28 +251,31 @@ function Invoke-Package($Info) {
         throw "nothing to package - run without -SkipFreeze first (no $FrozenDir\jautomatic.exe)"
     }
     Write-Host "--> harvesting files.wxs"
-    & python (Join-Path $PackagingDir "gen_files_wxs.py") `
-        $FrozenDir (Join-Path $PackagingDir "files.wxs")
-    if ($LASTEXITCODE -ne 0) { throw "files.wxs harvesting failed" }
+    Invoke-Logged -What "files.wxs harvesting" -LogName "harvest.log" -Run {
+        & python (Join-Path $PackagingDir "gen_files_wxs.py") `
+            $FrozenDir (Join-Path $PackagingDir "files.wxs")
+    }
 
     # dotnet resolves the local tool manifest upward from the working directory,
     # so run both dotnet calls from the repo root however we were invoked.
     Push-Location $RepoRoot
     try {
         Write-Host "--> restoring WiX $($Info.WIX_VERSION)"
-        & dotnet tool restore
-        if ($LASTEXITCODE -ne 0) { throw "dotnet tool restore failed" }
+        Invoke-Logged -What "dotnet tool restore" -LogName "dotnet-tool-restore.log" -Run {
+            & dotnet tool restore
+        }
 
         # NOTE: -d values must not end in a backslash (it escapes the quote).
         $msiPath = Join-Path $DistDir $Info.MSI_FILENAME
         Write-Host "--> building $($Info.MSI_FILENAME)"
-        & dotnet wix build -arch $Arch `
-            -d "ProductVersion=$($Info.MSI_VERSION)" `
-            -d "FrozenDir=$FrozenDir" `
-            -out $msiPath `
-            (Join-Path $PackagingDir "jautomatic.wxs") `
-            (Join-Path $PackagingDir "files.wxs")
-        if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+        Invoke-Logged -What "wix build" -LogName "wix-build.log" -Run {
+            & dotnet wix build -arch $Arch `
+                -d "ProductVersion=$($Info.MSI_VERSION)" `
+                -d "FrozenDir=$FrozenDir" `
+                -out $msiPath `
+                (Join-Path $PackagingDir "jautomatic.wxs") `
+                (Join-Path $PackagingDir "files.wxs")
+        }
     } finally {
         Pop-Location
     }

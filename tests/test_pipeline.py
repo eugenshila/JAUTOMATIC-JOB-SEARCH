@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -12,6 +13,7 @@ from jautomatic.models import (SAMPLE_PROFILE, Application, ApplicationStatus, J
                                Profile, Workspace, pretty_term, human_join, parse_date, slugify,
                                unique_document_path)
 from jautomatic.services.application_pipeline import ApplicationPipeline, match_job, rank_jobs
+from tests.support import WorkspaceTestCase
 
 
 def sample_profile() -> Profile:
@@ -40,16 +42,23 @@ def welder_job() -> JobPosting:
                       tags=["welding", "safety"], posted_at=(date.today() - timedelta(days=40)).isoformat())
 
 
-class WorkspaceTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
-        self.addCleanup(self.tmp.cleanup)
+class WorkspaceTests(WorkspaceTestCase):
+    """Uses the shared temp-dir/workspace scaffolding (see tests/support.py)."""
 
     def test_creates_data_files(self):
         self.assertTrue(self.workspace.db_path.exists())
         self.assertTrue(self.workspace.documents_dir.is_dir())
         self.assertTrue(self.workspace.exports_dir.is_dir())
+
+    def test_close_releases_the_connection_and_is_idempotent(self):
+        # This is the contract that keeps temp-dir teardown Windows-safe: the
+        # SQLite handle must be gone before the directory is removed (an open
+        # handle blocks deletion on Windows - WinError 32), and closing twice
+        # must not raise because cleanup paths can overlap.
+        self.workspace.close()
+        with self.assertRaises(sqlite3.ProgrammingError):
+            self.workspace._conn.execute("SELECT 1")
+        self.workspace.close()
 
     def test_job_upsert_deduplicates(self):
         first = self.workspace.save_jobs([python_job()])
@@ -80,13 +89,8 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(again.data_dir, str(self.workspace.root))
 
 
-class ThreadSafetyTests(unittest.TestCase):
+class ThreadSafetyTests(WorkspaceTestCase):
     """The UI imports/generates on a thread pool, so the workspace must cope."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
-        self.addCleanup(self.tmp.cleanup)
 
     def test_concurrent_writes_from_many_threads(self):
         import concurrent.futures as futures
@@ -151,11 +155,9 @@ class MatchingTests(unittest.TestCase):
         self.assertTrue(0 <= result.score <= 100)
 
 
-class PipelineTests(unittest.TestCase):
+class PipelineTests(WorkspaceTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = Workspace(Path(self.tmp.name))
-        self.addCleanup(self.tmp.cleanup)
+        super().setUp()
         self.workspace.save_profile(sample_profile())
         self.settings = self.workspace.load_settings()
         self.settings.export_format = "docx"

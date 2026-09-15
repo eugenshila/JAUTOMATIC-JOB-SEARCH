@@ -390,6 +390,23 @@ class WorkflowWiringTest(unittest.TestCase):
     def test_dotnet_line_matches_build_info(self):
         self.assertIn(f'"{build_info.DOTNET_VERSION}"', self.text)
 
+    def test_workflow_exposes_failure_diagnostics(self):
+        # A red run must explain itself in an annotation (always reachable),
+        # not only in the raw log archive: every stage tees its output, the
+        # failure step turns the tail into an ::error::, and the logs upload.
+        for stage_log in ("build-freeze.log", "build-package.log", "verify-install.log"):
+            self.assertIn(stage_log, self.text)
+        self.assertIn("Expose build diagnostics", self.text)
+        self.assertIn("if: failure()", self.text)
+        self.assertIn("::error title=", self.text)
+        self.assertIn("Tee-Object", self.text)
+        self.assertIn("build-diagnostics", self.text)
+
+    def test_workflow_runs_python_with_utf8_io(self):
+        # Runner stdout is a pipe -> Python would pick the ANSI code page and
+        # choke on non-ASCII test names/messages, hiding the real failure.
+        self.assertIn("PYTHONUTF8", self.text)
+
     def test_build_script_uses_same_signing_inputs(self):
         script = (PACKAGING / "build.ps1").read_text(encoding="utf-8")
         self.assertIn("AZURE_SIGNING_ENDPOINT", script)

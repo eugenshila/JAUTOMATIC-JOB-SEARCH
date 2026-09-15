@@ -5,8 +5,14 @@
 # authoring slip or a broken frozen build fails loudly here instead of on a
 # user's machine. The MSI + install report ship as run artefacts.
 #
+# Diagnostics: each stage tees its output into a log file and the failure step
+# turns the tail of those logs (plus the last "--> stage" marker) into an
+# ::error:: annotation and a job summary. Annotations are always reachable -
+# even when the raw log archive is not - so a red run explains itself without
+# anyone having to re-run it.
+#
 # Signing (releases): the two azure/artifact-signing-action rounds only run
-# when the signing account is configured — repo variables AZURE_SIGNING_ENDPOINT /
+# when the signing account is configured - repo variables AZURE_SIGNING_ENDPOINT /
 # AZURE_SIGNING_ACCOUNT / AZURE_SIGNING_PROFILE plus secrets AZURE_CLIENT_ID /
 # AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID (OIDC app registration). Without
 # them the MSI still builds and verifies; it is simply unsigned. See
@@ -31,10 +37,16 @@ jobs:
       AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
       AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
       # Secrets may not be referenced in `if:` conditions (GitHub rejects the
-      # workflow file outright — "Unrecognized named-value: 'secrets'"), so the
+      # workflow file outright - "Unrecognized named-value: 'secrets'"), so the
       # client id lands in an env var and the conditions below test that name.
       # It never leaves the runner: only azure/login consumes it, via `with:`.
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      # Runner stdout is a pipe, so Python picks the ANSI code page (cp1252)
+      # for it: any non-ASCII test name or failure message (job titles in the
+      # fixtures, "->" arrows in the reports) would raise UnicodeEncodeError and
+      # hide the real failure behind an encoding traceback. UTF-8 mode keeps
+      # print() faithful to what the suite produces locally.
+      PYTHONUTF8: "1"
 
     steps:
       - name: Checkout
@@ -51,7 +63,11 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Freeze (venv, tests, PyInstaller)
-        run: packaging\build.ps1 -SkipPackage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          packaging\build.ps1 -SkipPackage *>&1 | Tee-Object -FilePath build-freeze.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Azure login (OIDC)
         if: >-
@@ -79,7 +95,11 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Package (harvest + wix build)
-        run: packaging\build.ps1 -SkipFreeze -SkipTests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          packaging\build.ps1 -SkipFreeze -SkipTests *>&1 | Tee-Object -FilePath build-package.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Sign installer
         if: >-
@@ -97,7 +117,32 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify install
-        run: packaging\verify-install.ps1 -MsiPath dist\*.msi
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          packaging\verify-install.ps1 -MsiPath dist\*.msi *>&1 | Tee-Object -FilePath verify-install.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Expose build diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          $logs = @("build-freeze.log", "build-package.log", "verify-install.log")
+          foreach ($log in $logs) {
+            if (-not (Test-Path $log)) { continue }
+            $lines = @(Get-Content $log)
+            $stage = @($lines | Where-Object { $_ -match '^--> ' } | Select-Object -Last 1)
+            $tail = ($lines | Select-Object -Last 15) -join " || "
+            $message = "stage=$($stage -join '') :: $tail"
+            # Annotations are single-line and length-limited; keep the newest
+            # information and escape what the command syntax reserves.
+            if ($message.Length -gt 3500) { $message = $message.Substring($message.Length - 3500) }
+            $escaped = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=JAUTOMATIC build failure ($log)::$escaped"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### $log (last 120 lines)"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ('```' + "`n" +
+                (($lines | Select-Object -Last 120) -join "`n") + "`n" + '```')
+          }
 
       - name: Upload installer
         if: success()
@@ -105,6 +150,18 @@ jobs:
         with:
           name: JAUTOMATIC-Setup-x64
           path: dist\*.msi
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics
+          path: |
+            build-freeze.log
+            build-package.log
+            verify-install.log
+            build/logs/*.log
+          if-no-files-found: ignore
 
       - name: Upload install report
         if: always()
@@ -115,3 +172,4 @@ jobs:
             dist\install-report.json
             dist\install.log
             dist\uninstall.log
+          if-no-files-found: ignore
