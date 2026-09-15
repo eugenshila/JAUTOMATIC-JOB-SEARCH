@@ -27,6 +27,7 @@ from .calendar_export import build_calendar, events_for, parse_when
 from .cover_letter import CoverLetterService, MatchContext
 from .cv_generator import CVGenerator, GeneratedDocument
 from .email_drafter import EmailDrafter, render_follow_up
+from .interview_prep import InterviewPrep, export_prep, generate_questions
 from .job_scraper import JobScraper, SearchOutcome, SearchQuery
 
 # scoring weights (sum = 100)
@@ -223,7 +224,7 @@ class ApplicationPipeline:
         self.workspace = workspace
         self.settings = settings or workspace.load_settings()
         self.scraper = JobScraper(self.settings)
-        self.cv_generator = CVGenerator()
+        self.cv_generator = CVGenerator(workspace.templates_dir)
         self.cover_letters = CoverLetterService()
         self.emails = EmailDrafter()
 
@@ -348,6 +349,9 @@ class ApplicationPipeline:
         materials.cv = self.cv_generator.generate(profile, job, template, out_dir, fmt, match,
                                                   reuse=record.cv_path or None)
         record.cv_path = str(materials.cv.path) if materials.cv.path else ""
+        if materials.cv.warning:
+            record.log("template fallback", materials.cv.warning)
+        template = materials.cv.template   # what was actually used (after any fallback)
 
         attachment_names = [materials.cv.filename] if materials.cv.path else []
         if with_cover_letter:
@@ -461,6 +465,63 @@ class ApplicationPipeline:
                        f"{record.interview_at}{f' — {note}' if note else ''}")
         return self.workspace.save_application(record)
 
+    # -- interview prep ---------------------------------------------------- #
+    def _record(self, application: Application | str) -> Application:
+        record = (self.workspace.get_application(application)
+                  if isinstance(application, str) else application)
+        if record is None:
+            raise KeyError(f"unknown application: {application}")
+        return record
+
+    def interview_prep(self, application: Application | str) -> InterviewPrep:
+        """The stored prep sheet for an application (empty when none yet)."""
+        return InterviewPrep.from_dict(self._record(application).prep)
+
+    def save_interview_prep(self, application: Application | str, prep: InterviewPrep,
+                            note: str = "") -> Application:
+        record = self._record(application)
+        record.prep = prep.to_dict()
+        if note:
+            record.log("interview prep", note)
+        else:
+            record.updated_at = now_iso()
+        return self.workspace.save_application(record)
+
+    def generate_interview_prep(self, application: Application | str,
+                                profile: Profile | None = None) -> tuple[InterviewPrep, int]:
+        """(Re)build the question bank for one application; keeps existing answers.
+
+        Returns the merged prep and how many questions were newly added.
+        """
+        record = self._record(application)
+        job = self.workspace.get_job(record.job_id)
+        if job is None:
+            raise KeyError(f"job {record.job_id} is not in the workspace")
+        profile = profile or self.workspace.load_profile()
+        prep = InterviewPrep.from_dict(record.prep)
+        added = prep.merge_generated(generate_questions(profile, job, match_job(profile, job,
+                                                                                 self.settings)))
+        self.save_interview_prep(record, prep,
+                                 f"question bank generated ({added} new, "
+                                 f"{len(prep.questions)} total)")
+        return prep, added
+
+    def export_interview_prep(self, application: Application | str,
+                              profile: Profile | None = None, fmt: str | None = None) -> Path:
+        """Write the prep sheet to ``documents/`` and remember its path."""
+        record = self._record(application)
+        job = self.workspace.get_job(record.job_id)
+        if job is None:
+            raise KeyError(f"job {record.job_id} is not in the workspace")
+        profile = profile or self.workspace.load_profile()
+        prep = InterviewPrep.from_dict(record.prep)
+        path = export_prep(prep, profile, job, self.workspace.documents_dir, record,
+                           fmt or "md")
+        record.prep_path = str(path)
+        record.log("interview prep exported", path.name)
+        self.workspace.save_application(record)
+        return path
+
     # -- reporting --------------------------------------------------------- #
     def export_tracker_csv(self, profile: Profile | None = None,
                            path: Path | None = None) -> Path:
@@ -471,7 +532,7 @@ class ApplicationPipeline:
             writer = csv.writer(handle)
             writer.writerow(["Title", "Company", "Location", "Remote", "Source", "Score", "Status",
                              "Created", "Sent", "Follow-up", "Interview", "Salary", "URL", "CV",
-                             "Cover letter", "Email", "Notes"])
+                             "Cover letter", "Email", "Prep", "Notes"])
             for row in rows:
                 app = row.application
                 writer.writerow([
@@ -481,6 +542,8 @@ class ApplicationPipeline:
                     Path(app.cv_path).name if app.cv_path else "",
                     Path(app.cover_letter_path).name if app.cover_letter_path else "",
                     Path(app.email_path).name if app.email_path else "",
+                    (f"{app.prep_answered_count}/{app.prep_question_count}"
+                     if app.prep_question_count else ""),
                     re.sub(r"\s+", " ", app.notes).strip()])
         return target
 

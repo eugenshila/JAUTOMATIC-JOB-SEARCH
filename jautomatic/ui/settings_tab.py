@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout,
 
 from .. import APP_TITLE, __version__
 from ..models import AppSettings
-from ..services.cv_generator import TEMPLATE_LABELS, TEMPLATES
+from ..services.cv_generator import template_label
 from . import theme as th
 
 FORMATS = [("Microsoft Word (.docx)", "docx"), ("Markdown (.md)", "md"), ("Plain text (.txt)", "txt")]
@@ -111,8 +111,7 @@ class SettingsTab(QWidget):
         form = QFormLayout()
         form.setSpacing(8)
         self.cv_template = QComboBox()
-        for template in TEMPLATES:
-            self.cv_template.addItem(TEMPLATE_LABELS[template], template)
+        self._fill_templates()
         self.export_format = QComboBox()
         for caption, value in FORMATS:
             self.export_format.addItem(caption, value)
@@ -127,8 +126,23 @@ class SettingsTab(QWidget):
         form.addRow("", self.with_cover_letter)
         form.addRow("", self.with_email)
         documents.add_layout(form)
-        documents.add(th.button("Preview the selected template", "default", "",
-                                self._preview_template))
+        template_row = QHBoxLayout()
+        template_row.setSpacing(6)
+        template_row.addWidget(th.button("Preview the selected template", "default", "",
+                                         self._preview_template))
+        template_row.addWidget(th.button("New custom template", "default",
+                                         "Write an annotated starter .md into the templates "
+                                         "folder and open it in your editor",
+                                         self._new_template))
+        template_row.addWidget(th.button("Templates folder", "ghost",
+                                         "Drop your own .md templates here",
+                                         self._open_templates_dir))
+        template_row.addWidget(th.button("Reload", "ghost",
+                                         "Re-scan the templates folder", self._reload_templates))
+        template_row.addStretch(1)
+        documents.add_layout(template_row)
+        self.template_status = th.label("", "small", wrap=True)
+        documents.add(self.template_status)
         left.addWidget(documents)
         left.addStretch(1)
 
@@ -235,8 +249,7 @@ class SettingsTab(QWidget):
         self.min_salary.setValue(settings.min_salary)
         self.remote_only.setChecked(settings.remote_only)
         self.exclude_keywords.setText(settings.exclude_keywords)
-        index = self.cv_template.findData(settings.cv_template)
-        self.cv_template.setCurrentIndex(max(0, index))
+        self._fill_templates(keep=settings.cv_template)
         index = self.export_format.findData(settings.export_format)
         self.export_format.setCurrentIndex(max(0, index))
         self.with_cover_letter.setChecked(settings.include_cover_letter)
@@ -302,6 +315,56 @@ class SettingsTab(QWidget):
         self.ctx.apply_theme(defaults.theme)
         self.ctx.notify("Settings restored to defaults.", "success")
 
+    # ---------------------------------------------------------- templates #
+    def _fill_templates(self, keep: str | None = None) -> None:
+        """Built-ins + valid custom files; broken custom files are reported, not listed."""
+        generator = self.ctx.pipeline.cv_generator
+        wanted = keep if keep is not None else (self.cv_template.currentData() or "modern")
+        self.cv_template.blockSignals(True)
+        self.cv_template.clear()
+        for name, label in generator.available_templates():
+            self.cv_template.addItem(label, name)
+        index = self.cv_template.findData(wanted)
+        self.cv_template.setCurrentIndex(max(0, index))
+        self.cv_template.blockSignals(False)
+        custom = generator.registry.list()
+        broken = [t for t in custom if not t.ok]
+        good = [t for t in custom if t.ok]
+        bits = []
+        if good:
+            bits.append(f"{len(good)} custom template(s) in {generator.registry.directory}")
+        else:
+            bits.append(f"No custom templates yet — drop .md files into "
+                        f"{generator.registry.directory} or press “New custom template”.")
+        for item in broken:
+            bits.append(f"⚠ {item.path.name}: {item.error}")
+        if index < 0 and wanted:
+            bits.append(f"⚠ Saved template “{wanted}” is unavailable; “modern” will be used.")
+        if hasattr(self, "template_status"):
+            self.template_status.setText("\n".join(bits))
+
+    def _reload_templates(self) -> None:
+        self._fill_templates()
+        self.ctx.notify("Templates reloaded.", "info")
+
+    def _open_templates_dir(self) -> None:
+        directory = self.ctx.pipeline.cv_generator.registry.ensure_directory()
+        if directory is not None:
+            th.open_in_file_manager(directory)
+
+    def _new_template(self) -> None:
+        registry = self.ctx.pipeline.cv_generator.registry
+        try:
+            path = registry.create_starter()
+        except OSError as exc:
+            self.ctx.notify(f"Could not write the template: {exc}", "error")
+            return
+        self._fill_templates(keep=f"custom:{path.name}")
+        self._mark_dirty()
+        self.ctx.notify(f"Created {path.name} — edit it, then Save settings to use it.",
+                        "success")
+        th.open_path(path)
+
     def _preview_template(self) -> None:
         template = self.cv_template.currentData() or "modern"
         profile = self.ctx.profile
@@ -311,7 +374,9 @@ class SettingsTab(QWidget):
                                                            self.export_format.currentData())
 
         def done(document) -> None:  # noqa: ANN001
-            self.ctx.open_preview(f"CV template · {TEMPLATE_LABELS.get(template, template)}",
+            if document.warning:
+                self.ctx.notify(document.warning, "warning")
+            self.ctx.open_preview(f"CV template · {template_label(document.template)}",
                                   document.text, None)
 
         self.ctx.run_task("Rendering template preview", work, done)

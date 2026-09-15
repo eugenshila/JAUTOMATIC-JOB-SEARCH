@@ -33,13 +33,22 @@ role", …). One click generates the whole application pack.
 
 **Applications** — a real tracker: status pipeline (discovered → shortlisted → materials
 ready → sent → interview → offer, plus rejected/archived), score, documents 3/3 indicator,
-follow-up date with a due warning, an interview date/time field, notes, and a full event
-history per application.
+follow-up date with a due warning, an interview date/time field, notes, interview-prep
+progress, and a full event history per application.
+
+**Interview prep** — every application has its own prep sheet: free-text notes (company
+research, interviewer names, logistics) plus a question bank *derived from that posting*:
+technical questions for the tags you cover, honest "gap" questions for the ones you don't,
+your own achievements turned into STAR prompts ("Your CV says: 'Cut p95 latency 62%' —
+take me through it"), salary/logistics questions with hints anchored on the advertised
+band, and questions to ask them. Answers are stored per question, starred questions float
+up, you can add your own, regenerating never overwrites what you wrote, and the sheet
+exports to Markdown/Word next to your CV.
 
 **Settings** — enable/disable sources, Adzuna credentials, search defaults, document
-options (template, format, letter/e-mail toggles), autopilot thresholds, follow-up window,
-dark/light theme, and data tools (open folder, backup, CSV export, calendar export, clear
-cache).
+options (template, format, letter/e-mail toggles, custom-template helpers), autopilot
+thresholds, follow-up window, dark/light theme, and data tools (open folder, backup, CSV
+export, calendar export, clear cache).
 
 **Autopilot (opt-in)** — after an import, generate materials automatically for postings
 above your score threshold, up to a per-run limit.
@@ -122,9 +131,10 @@ By default in your user data folder (`%APPDATA%\JAUTOMATIC` on Windows,
 ```
 profile.json          your details (also editable by hand / exportable / importable)
 settings.json         sources, defaults, theme
-jautomatic.sqlite3    postings + applications (SQLite, WAL)
-documents/            generated CVs, cover letters, e-mail drafts, follow-ups
+jautomatic.sqlite3    postings + applications (SQLite, WAL) incl. interview-prep sheets
+documents/            generated CVs, cover letters, e-mail drafts, follow-ups, prep sheets
 exports/              CSV tracker exports + .ics calendar exports
+templates/            your own CV templates (*.md) — see docs/cv-templates.md
 ```
 
 Deleting the folder is a full reset — there is nothing hidden elsewhere.
@@ -164,8 +174,14 @@ Adding a board = subclass `JobSource` in `jautomatic/services/job_scraper.py` (s
 
 ## Generated documents
 
-* **CV** — three templates: `modern` (impact-first, tailored skills line), `classic`
-  (traditional ATS layout) and `compact` (one page). Export as `.docx`, `.md` or `.txt`.
+* **CV** — six built-in templates: `modern` (impact-first, tailored skills line), `classic`
+  (traditional ATS layout), `compact` (one page), `functional` (skills-first, evidence
+  grouped under the posting's keywords), `executive` (quantified achievements first) and
+  `technical` (relevant/other skills split, a stack line per role). Export as `.docx`, `.md`
+  or `.txt`. **Your own templates** are plain `.md` files in `<data dir>/templates/` using a
+  small, safe Jinja-like syntax (`{{ name }}`, `{% for role in experience %}`,
+  `{% if job %}`); Settings can write an annotated starter file for you. Full variable
+  reference in [`docs/cv-templates.md`](docs/cv-templates.md).
 * **Cover letter** — assembled deterministically from your profile, the posting text and the
   match analysis, in one of four tones (`professional`, `friendly`, `enthusiastic`,
   `concise`). It quotes the posting, translates your achievements into first person ("Owned
@@ -174,6 +190,8 @@ Adding a board = subclass `JobSource` in `jautomatic/services/job_scraper.py` (s
 * **Application e-mail** — subject line, recipient (when the posting lists a contact address)
   and an attachment list matching the files that were generated.
 * **Follow-up e-mail** — short, polite nudge with the days-since-sent baked in.
+* **Interview prep sheet** — notes + question bank with your answers, grouped by category
+  (`PREP_<you>_<company>_<role>.md`, or `.docx`).
 
 Generated files are named after you, the company and the role, e.g.
 `CV_alex-doe_northwind-analytics_senior-python-engineer.docx`, so a folder full of them stays
@@ -191,14 +209,17 @@ jautomatic/
     calendar_export.py               RFC 5545 .ics export (interviews + follow-ups)
     autofill.py                      deterministic form parser, taxonomy, fill planner
     autofill_browser.py              assisted Playwright hand-off (optional dependency)
-    cv_generator.py                  templates + docx/md/txt exporters
+    cv_generator.py                  6 built-in templates, custom-template registry, exporters
+    template_engine.py               safe Jinja-subset renderer for user-supplied templates
+    interview_prep.py                per-application notes + derived question bank
     cover_letter.py                  tone-driven letter drafting
     email_drafter.py                 application + follow-up e-mails
   ui/
     main_window.py                   window shell, background workers, app state
+    interview_prep_dialog.py         notes + question bank window (from the Applications tab)
     theme.py                         dark/light palettes, shared widgets
     dashboard_tab.py  profile_tab.py  job_search_tab.py  applications_tab.py  settings_tab.py
-tests/                               stdlib unittest suite (146 tests, no network)
+tests/                               stdlib unittest suite (262 tests, no network)
 tests/fixtures/forms/                committed ATS form fixtures for the autofill engine
 tools/screenshot.py                  head-less UI driver used for the screenshots above
 tools/autofill.py                   autofill CLI (--plan offline, --url assisted)
@@ -208,7 +229,7 @@ tools/genstubs.py                    stub libs so PySide6 runs in headless/CI co
 ## Development
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # 146 tests, no network needed
+.venv/bin/python -m unittest discover -s tests -t .   # 262 tests, no network needed
 .venv/bin/ruff check jautomatic main.py tools tests   # lint
 .venv/bin/python main.py --selftest                   # end-to-end smoke test
 ```
@@ -255,7 +276,8 @@ Everything runs locally. The only outbound requests are the job-board queries yo
   remains deliberately unbuilt: automated login breaches their terms of service and gets
   accounts banned, so unless someone deliberately accepts that risk, public boards remain
   the way in.
-* More CV templates / user-supplied template files
-* Interview-prep notes and question banks per application
+* ~~More CV templates / user-supplied template files~~ — done: six built-ins plus
+  `templates/*.md` ([reference](docs/cv-templates.md))
+* ~~Interview-prep notes and question banks per application~~ — done
 * ~~Calendar (ICS) export for interviews and follow-ups~~ — done
 * Installer packaging (MSI/PyInstaller) — intentionally not part of this repository yet
