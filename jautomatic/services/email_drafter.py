@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..models import JobPosting, Profile, human_join, pretty_term, slugify
+from ..models import JobPosting, Profile, human_join, pretty_term, slugify, unique_document_path
 from .cover_letter import MatchContext
-from .cv_generator import GeneratedDocument, export
+from .cv_generator import GeneratedDocument, document_suffix, export
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
@@ -178,7 +178,8 @@ class EmailDrafter:
 
     def generate(self, profile: Profile, job: JobPosting, match: MatchContext | None = None,
                  tone: str | None = None, attachments: list[str] | None = None,
-                 output_dir: Path | None = None, fmt: str = "docx") -> GeneratedDocument:
+                 output_dir: Path | None = None, fmt: str = "docx", *,
+                 reuse: str | Path | None = None) -> GeneratedDocument:
         draft = render_email(profile, job, match, tone, attachments)
         document = GeneratedDocument(
             kind="email", text=draft.to_markdown(), template=draft.tone,
@@ -186,7 +187,10 @@ class EmailDrafter:
         if output_dir is not None:
             stem = (f"Email_{slugify(profile.display_name, 24)}_{slugify(job.company, 18)}_"
                     f"{slugify(job.title, 20)}")
-            document.path = export(draft.to_markdown(), Path(output_dir) / f"{stem}.{fmt}", fmt,
+            key = f"email|{profile.display_name}|{job.company}|{job.title}"
+            path = unique_document_path(output_dir, stem, document_suffix(fmt),
+                                        key=key, reuse=reuse)
+            document.path = export(draft.to_markdown(), path, fmt,
                                    title=draft.subject)
         return document
 
@@ -199,7 +203,9 @@ class EmailDrafter:
         if output_dir is not None:
             stem = (f"FollowUp_{slugify(profile.display_name, 20)}_{slugify(job.company, 16)}_"
                     f"{date.today().isoformat()}")
-            document.path = export(draft.to_markdown(), Path(output_dir) / f"{stem}.{fmt}", fmt,
+            key = f"follow_up|{profile.display_name}|{job.company}|{job.title}|{date.today().isoformat()}"
+            path = unique_document_path(output_dir, stem, document_suffix(fmt), key=key)
+            document.path = export(draft.to_markdown(), path, fmt,
                                    title=draft.subject)
         return document
 

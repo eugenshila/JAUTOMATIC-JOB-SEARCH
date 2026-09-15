@@ -192,6 +192,30 @@ class OrchestratorTests(unittest.TestCase):
         self.assertTrue(outcome.used_fallback)
         self.assertTrue(all(job.source == "sample" for job in outcome.jobs))
 
+    def test_cancel_before_the_first_result_returns_empty_and_skips_fallback(self):
+        def fake(url, timeout, params=None):  # noqa: ANN001
+            return REMOTIVE
+
+        with mock.patch.object(job_scraper, "_request_json", side_effect=fake):
+            outcome = self._scraper().search(
+                SearchQuery(text="python", sources=["remotive", "arbeitnow"],
+                            limit_per_source=10),
+                should_cancel=lambda: True)
+        self.assertEqual(outcome.jobs, [])       # nothing consumed after the cancel flag
+        self.assertEqual(outcome.results, [])
+        self.assertFalse(outcome.used_fallback)  # a closing app must not "recover" into demo data
+
+    def test_cancel_after_the_first_source_keeps_the_partial_result(self):
+        arrivals = iter([False, True, True])
+
+        with mock.patch.object(job_scraper, "_request_json", return_value=REMOTIVE):
+            outcome = self._scraper().search(
+                SearchQuery(text="python", sources=["remotive", "arbeitnow"],
+                            limit_per_source=10),
+                should_cancel=lambda: next(arrivals, True))
+        self.assertEqual(len(outcome.results), 1)          # first source landed, then stop
+        self.assertEqual(outcome.jobs[0].source, "remotive")
+
     def test_no_fallback_when_a_source_responded(self):
         def fake(url, timeout, params=None):  # noqa: ANN001, ARG001
             if "remotive" in url:

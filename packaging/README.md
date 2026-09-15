@@ -165,47 +165,45 @@ run as the installer test suite failing and fix it before merging.
 * SmartScreen still prompts on a signed build — expected until publisher
   reputation accrues; see "SmartScreen, honestly" above, not a bug.
 
-## Deferred follow-ups (9–11)
+## Follow-ups 9–11 — fixed
 
 During installer hardening, eleven findings came up; 1–8 were fixed in the
-release this ships with. The remaining three are recorded here — each with
-its installer impact — so they are a conscious scope cut, not forgotten work:
+release this ships with. The remaining three were fixed in the follow-up
+change that also lands this note — they are recorded here because they shaped
+installer decisions, and to document what the fixes guarantee:
 
-**Follow-up 9 — `slugify` collisions.** `jautomatic/models.py::slugify`
-strips everything non-alphanumeric and truncates hard (`max_length`), so
-distinct names regularly collide: truncation (`"Senior Python Engineer,
-Platform (m/f/d)"` vs. `"Senior Python Engineer, Platform (Remote)"` at 20
-chars), punctuation-only differences (`"AT&T"` vs. `"AT T"`), and the `"untitled"`
-fallback for empty or fully non-Latin names (e.g. CJK company names). Two
-applications whose CV/letter/e-mail stems collide overwrite each other's
-files in `documents/`. *Installer impact: none on the MSI itself* (the file
-harvester uses real bundle paths, and shortcuts/registry values are constants)
-— but the frozen exe ships the behavior, so the installer must not be
-advertised as containing the fix. Fix direction: append a short hash of the
-un-slugified input on collision (`stem`, `stem-a3f9`, …).
+**Follow-up 9 — `slugify` collisions (fixed).** Document stems are built from
+`slugify` output, which normalises hard (truncation, punctuation loss, the
+`"untitled"` fallback for non-Latin names), so two applications could share a
+stem and overwrite each other's files in `documents/`. Generation now goes
+through `models.unique_document_path`: the application's *own* recorded path
+is regenerated in place; a taken name gets a short hash of the un-slugified
+identity (`stem-a3f9`); the same-identity re-application keeps one file.
+Covered by the pipeline tests (`test_colliding_slugs_never_overwrite_each_other`,
+`test_fully_non_latin_names_do_not_all_land_on_untitled`,
+`test_regenerating_materials_updates_the_same_files_in_place`) and the
+`unique_document_path` unit tests.
 
-**Follow-up 10 — `QSettings` registry location.** Window geometry is stored
-via `QSettings("JAUTOMATIC", "job-search")`, which on Windows means
-`HKCU\Software\JAUTOMATIC\job-search` — outside the app's canonical
-`settings.json`, and invisible to users who (correctly, per our docs) believe
-"deleting the folder is a full reset". *Installer impact: the uninstaller
-therefore has no "remove my data" checkbox yet* — wiping `%APPDATA%\JAUTOMATIC`
-without also clearing that key would leave the next install believing stale
-geometry, and silently deleting registry keys the user never knowingly
-created is worse. So the MSI leaves both the data folder and the HKCU key
-behind, and `docs/install-windows.md` discloses the key with manual-removal
-steps. Fix direction: migrate geometry into `settings.json` (or document
-`QSettings` as the home for window state and add the checkbox then).
+**Follow-up 10 — `QSettings` registry location (fixed).** Window geometry
+moved out of `QSettings` (`HKCU\Software\JAUTOMATIC\job-search` on Windows)
+into `settings.json` inside the data dir — deleting `%APPDATA%\JAUTOMATIC`
+now really is a full reset, and the app writes nothing outside its install
+folder and data folder. The MSI's uninstaller story (leave user data behind,
+no hidden registry residue) is exactly as documented in
+[`docs/install-windows.md`](../docs/install-windows.md); the legacy 1.0 key,
+if it exists, is disclosed there with removal steps. A "remove my data"
+checkbox in the MSI remains an optional future nicety, not a correctness gap.
 
-**Follow-up 11 — quit race.** `MainWindow.closeEvent` sets `_closing`, waits
-at most 800 ms for the thread pool, then clears `_workers` and closes the
-workspace — but a worker still running past the 800 ms keeps a reference to
-the closing window and a workspace whose SQLite handle is now closed, so its
-`finished` signal can touch dead UI or raise `ProgrammingError` on the closed
-connection (usually swallowed by Qt, occasionally a traceback on shutdown).
-*Installer impact: marginal but real* — the MSI relies on the app exiting
-promptly and cleanly (Restart Manager / FilesInUse handling during upgrades),
-and a worker that survives shutdown can hold files or delay exit long enough
-to turn an upgrade into a "reboot required" prompt. Fix direction: cooperative
-cancellation (a `_closing`-checked token passed into long tasks) plus joining
-workers without a timeout after refusing new ones.
+**Follow-up 11 — quit race (fixed).** `closeEvent` used to give workers an
+800 ms grace period and then close the workspace anyway, so a surviving worker
+could touch dead UI or a closed SQLite handle. Shutdown is now cooperative and
+race-free: `closeEvent` flips `_closing` + a `threading.Event` cancel flag,
+`run_task` refuses new work, queued workers check the flag before touching
+their fn, long loops (job search, batch prepare, autopilot) poll it between
+units of work, the pool is joined with **no timeout**, and late signal
+deliveries are muted before `Workspace.close()`. Covered by the offscreen GUI
+tests (`test_close_joins_running_workers_and_mutes_late_signals`,
+`test_run_task_is_refused_once_closing`,
+`test_queued_worker_starts_nothing_after_cancel`) plus pipeline/scraper
+cancellation tests. *Installer relevance:* the app exits promptly and cleanly
+on upgrades — no Restart Manager surprises from a worker outliving the window.

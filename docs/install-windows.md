@@ -41,12 +41,15 @@ and choose Remove. The uninstaller removes the program files, the shortcut
 and the registry entries it created — and deliberately **leaves your data
 behind**:
 
-* `%APPDATA%\JAUTOMATIC` — your profile, settings, database and generated
-  documents. Delete the folder if you want a full reset.
-* `HKCU\Software\JAUTOMATIC\job-search` — a single registry key holding the
-  window size/position (a Qt implementation detail we plan to fold into
-  `settings.json`; until then it is disclosed here rather than silently kept).
-  To remove it, run `reg delete "HKCU\Software\JAUTOMATIC\job-search" /f`.
+* `%APPDATA%\JAUTOMATIC` — your profile, settings (including the saved window
+  size/position), database and generated documents. Delete the folder if you
+  want a full reset — for current versions that really is everything the app
+  writes outside its install folder.
+* `HKCU\Software\JAUTOMATIC\job-search` — **legacy leftover only.** Version
+  1.0 stored the window geometry there; current releases keep it in
+  `settings.json` inside the data folder above and never touch the registry.
+  If you ever ran 1.0, the stale key may still exist; remove it with
+  `reg delete "HKCU\Software\JAUTOMATIC\job-search" /f`.
 
 ## Silent install
 

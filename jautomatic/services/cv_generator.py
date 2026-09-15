@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ..models import JobPosting, Profile, slugify, specific_keywords, tokenize
+from ..models import (JobPosting, Profile, slugify, specific_keywords, tokenize,
+                      unique_document_path)
 
 TEMPLATES = ("modern", "classic", "compact")
 TEMPLATE_LABELS = {
@@ -323,6 +324,16 @@ def _strip_inline_keep_bold(text: str) -> str:
     return re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
 
 
+def document_suffix(fmt: str) -> str:
+    """Canonical file suffix for an export format (mirrors ``export``'s mapping)."""
+    fmt = (fmt or "docx").lower()
+    if fmt in ("md", "markdown"):
+        return ".md"
+    if fmt in ("txt", "text"):
+        return ".txt"
+    return ".docx"
+
+
 def export(markdown: str, path: Path, fmt: str = "docx", title: str = "") -> Path:
     """Write ``markdown`` to ``path`` honouring ``fmt`` (docx|md|txt|markdown)."""
     fmt = (fmt or "docx").lower()
@@ -347,7 +358,7 @@ class CVGenerator:
 
     def generate(self, profile: Profile, job: JobPosting | None = None, template: str = "modern",
                  output_dir: Path | None = None, fmt: str = "docx",
-                 match=None) -> GeneratedDocument:  # noqa: ANN001
+                 match=None, *, reuse: str | Path | None = None) -> GeneratedDocument:  # noqa: ANN001
         template = template if template in TEMPLATES else "modern"
         markdown = render_markdown(profile, job, template, match)
         used = [k for k in (job.tags if job else []) if k]
@@ -355,8 +366,12 @@ class CVGenerator:
                                      used_keywords=used[:10])
         if output_dir is not None:
             stem = f"CV_{slugify(profile.display_name, 30)}"
+            key = f"cv|{profile.display_name}"
             if job:
                 stem += f"_{slugify(job.company, 20)}_{slugify(job.title, 24)}"
-            document.path = export(markdown, Path(output_dir) / f"{stem}.{fmt}",
-                                   fmt, title=f"CV – {profile.display_name}")
+                key += f"|{job.company}|{job.title}"
+            path = unique_document_path(output_dir, stem, document_suffix(fmt),
+                                        key=key, reuse=reuse)
+            document.path = export(markdown, path, fmt,
+                                   title=f"CV – {profile.display_name}")
         return document

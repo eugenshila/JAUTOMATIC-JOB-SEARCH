@@ -240,11 +240,18 @@ class ApplicationPipeline:
             include_sample=overrides.get("include_sample", False))
         return query
 
-    def search(self, text: str, location: str = "", **overrides) -> SearchOutcome:  # noqa: ANN003
-        return self.scraper.search(self.build_query(text, location, **overrides))
+    def search(self, text: str, location: str = "", should_cancel=None,
+               **overrides) -> SearchOutcome:  # noqa: ANN001, ANN003
+        return self.scraper.search(self.build_query(text, location, **overrides),
+                                   should_cancel=should_cancel)
 
-    def search_and_import(self, text: str, location: str = "", **overrides):  # noqa: ANN003, ANN201
-        outcome = self.search(text, location, **overrides)
+    def search_and_import(self, text: str, location: str = "", should_cancel=None,
+                          **overrides):  # noqa: ANN001, ANN003, ANN201
+        outcome = self.search(text, location, should_cancel=should_cancel, **overrides)
+        if should_cancel is not None and should_cancel():
+            # Shutdown began mid-search: importing into a workspace that is about
+            # to close would race ``Workspace.close()`` — drop the partial result.
+            return outcome, []
         created = self.import_jobs(outcome.jobs)
         return outcome, created
 
@@ -338,13 +345,15 @@ class ApplicationPipeline:
         out_dir = self.workspace.documents_dir
         materials = PreparedMaterials(application=record, job=job)
 
-        materials.cv = self.cv_generator.generate(profile, job, template, out_dir, fmt, match)
+        materials.cv = self.cv_generator.generate(profile, job, template, out_dir, fmt, match,
+                                                  reuse=record.cv_path or None)
         record.cv_path = str(materials.cv.path) if materials.cv.path else ""
 
         attachment_names = [materials.cv.filename] if materials.cv.path else []
         if with_cover_letter:
             materials.cover_letter = self.cover_letters.generate(
-                profile, job, match.as_context(), tone, out_dir, fmt)
+                profile, job, match.as_context(), tone, out_dir, fmt,
+                reuse=record.cover_letter_path or None)
             record.cover_letter_path = (str(materials.cover_letter.path)
                                         if materials.cover_letter.path else "")
             if materials.cover_letter.path:
@@ -352,7 +361,8 @@ class ApplicationPipeline:
 
         if with_email:
             materials.email = self.emails.generate(
-                profile, job, match.as_context(), tone, attachment_names, out_dir, fmt)
+                profile, job, match.as_context(), tone, attachment_names, out_dir, fmt,
+                reuse=record.email_path or None)
             record.email_path = str(materials.email.path) if materials.email.path else ""
 
         record.match_score = match.score
@@ -369,16 +379,19 @@ class ApplicationPipeline:
         return materials
 
     def prepare_batch(self, rows: list[TrackedApplication], profile: Profile | None = None,
-                      **kwargs) -> list[PreparedMaterials]:  # noqa: ANN003
+                      should_cancel=None, **kwargs) -> list[PreparedMaterials]:  # noqa: ANN001, ANN003
         out: list[PreparedMaterials] = []
         for row in rows:
+            if should_cancel is not None and should_cancel():
+                break  # closing: finish the batch with whatever is done so far
             try:
                 out.append(self.prepare(row.application, profile, **kwargs))
             except KeyError:
                 continue
         return out
 
-    def autopilot(self, profile: Profile | None = None, limit: int | None = None) -> list[PreparedMaterials]:
+    def autopilot(self, profile: Profile | None = None, limit: int | None = None,
+                  should_cancel=None) -> list[PreparedMaterials]:  # noqa: ANN001
         """Prepare materials for the best untouched matches (opt-in in Settings)."""
         profile = profile or self.workspace.load_profile()
         threshold = self.settings.autopilot_min_score
@@ -387,7 +400,7 @@ class ApplicationPipeline:
                       if row.status in (ApplicationStatus.DISCOVERED, ApplicationStatus.SHORTLISTED)
                       and row.score >= threshold]
         chosen = candidates[:max(0, limit)]
-        prepared = self.prepare_batch(chosen, profile)
+        prepared = self.prepare_batch(chosen, profile, should_cancel=should_cancel)
         for materials in prepared:
             materials.application.log("autopilot",
                                       f"prepared automatically (score {materials.application.match_score})")
