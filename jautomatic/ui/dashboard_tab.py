@@ -213,7 +213,7 @@ class DashboardTab(QWidget):
             self.matches_table.setItem(index, 0, score_item)
             self.matches_table.setItem(index, 1, QTableWidgetItem(row.title))
             self.matches_table.setItem(index, 2, QTableWidgetItem(row.company))
-            self.matches_table.setItem(index, 3, QTableWidgetItem(row.job.display_location))
+            self.matches_table.setItem(index, 3, QTableWidgetItem(row.job.short_location))
             status_item = QTableWidgetItem(row.status.label)
             status_item.setForeground(Qt.GlobalColor.gray)
             self.matches_table.setItem(index, 4, status_item)

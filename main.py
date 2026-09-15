@@ -112,7 +112,6 @@ def run_scrape(query: str, limit: int, offline: bool, data_dir: str | None) -> i
 # --------------------------------------------------------------------------- #
 def run_gui(data_dir: str | None = None) -> int:
     try:
-        from PySide6.QtCore import Qt
         from PySide6.QtGui import QFont
         from PySide6.QtWidgets import QApplication
     except ImportError:
@@ -124,7 +123,6 @@ def run_gui(data_dir: str | None = None) -> int:
     from jautomatic.ui.main_window import MainWindow
     from jautomatic.ui.theme import apply_theme
 
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_TITLE)
     app.setApplicationVersion(__version__)

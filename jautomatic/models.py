@@ -11,10 +11,12 @@ head-less (``python -m jautomatic.models`` prints the resolved data dir).
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
 import sqlite3
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -337,6 +339,33 @@ class JobPosting:
         high = f"{self.salary_max:,}" if self.salary_max else ""
         span = f"{low} - {high}" if low and high else (low or high)
         return f"{symbol}{span} {self.currency}".strip()
+
+    @staticmethod
+    def _short_amount(value: int) -> str:
+        if not value:
+            return ""
+        thousands = value / 1000
+        text = f"{thousands:.0f}k" if abs(thousands - round(thousands)) < 0.05 else f"{thousands:.1f}k"
+        return text if value >= 1000 else str(value)
+
+    @property
+    def salary_short(self) -> str:
+        """Compact band for dense tables: "$110k–140k" instead of "$110,000 - 140,000 USD"."""
+        if not (self.salary_min or self.salary_max):
+            return "—"
+        low = self._short_amount(self.salary_min)
+        high = self._short_amount(self.salary_max)
+        span = f"{low}–{high}" if low and high and low != high else (low or high)
+        symbol = {"USD": "$", "EUR": "€", "GBP": "£", "PLN": "zł"}.get(self.currency, "")
+        suffix = "" if symbol else (f" {self.currency}" if self.currency else "")
+        return f"{symbol}{span}{suffix}"
+
+    @property
+    def short_location(self) -> str:
+        """Location without the redundant "· Remote" suffix used in tables."""
+        if self.location:
+            return re.sub(r"\s*[·|]\s*remote\s*$", "", self.location, flags=re.IGNORECASE).strip()
+        return "Remote" if self.remote else "—"
 
     @property
     def age_days(self) -> int | None:
@@ -691,6 +720,23 @@ class AppSettings:
 # --------------------------------------------------------------------------- #
 # workspace (JSON files + SQLite)
 # --------------------------------------------------------------------------- #
+def synchronized(method):
+    """Serialise access to the shared SQLite connection.
+
+    The UI runs scraping/import/generation on a thread pool, so the same
+    connection is touched from several threads.  ``check_same_thread=False``
+    plus this lock is the simplest correct pattern for our access pattern
+    (SQLite is in WAL mode, so readers never block writers).
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Workspace:
     """Owns the data directory: paths, profile/settings JSON, SQLite tables."""
 
@@ -704,13 +750,15 @@ class Workspace:
         self.root.mkdir(parents=True, exist_ok=True)
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         self.exports_dir.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._migrate()
 
     # -- schema ------------------------------------------------------------ #
+    @synchronized
     def _migrate(self) -> None:
         cur = self._conn
         cur.executescript(
@@ -759,6 +807,7 @@ class Workspace:
         cur.commit()
 
     # -- jobs -------------------------------------------------------------- #
+    @synchronized
     def save_jobs(self, jobs: list[JobPosting]) -> int:
         """Insert new postings, refresh the ones we already know. Returns #new."""
         new = 0
@@ -787,6 +836,7 @@ class Workspace:
         self._conn.commit()
         return new
 
+    @synchronized
     def _row_to_job(self, row: sqlite3.Row) -> JobPosting:
         return JobPosting(
             job_id=row["job_id"], source=row["source"] or "", title=row["title"] or "",
@@ -797,19 +847,23 @@ class Workspace:
             tags=json.loads(row["tags"] or "[]"), posted_at=row["posted_at"] or "",
             fetched_at=row["fetched_at"] or "")
 
+    @synchronized
     def jobs(self, limit: int = 500) -> list[JobPosting]:
         rows = self._conn.execute(
             "SELECT * FROM jobs ORDER BY fetched_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_job(r) for r in rows]
 
+    @synchronized
     def get_job(self, job_id: str) -> JobPosting | None:
         row = self._conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
         return self._row_to_job(row) if row else None
 
+    @synchronized
     def job_count(self) -> int:
         return int(self._conn.execute("SELECT COUNT(*) c FROM jobs").fetchone()["c"])
 
     # -- applications ------------------------------------------------------ #
+    @synchronized
     def save_application(self, application: Application) -> Application:
         application.updated_at = now_iso()
         self._conn.execute(
@@ -830,6 +884,7 @@ class Workspace:
         self._conn.commit()
         return application
 
+    @synchronized
     def _row_to_application(self, row: sqlite3.Row) -> Application:
         return Application(
             application_id=row["application_id"], job_id=row["job_id"], status=row["status"],
@@ -839,36 +894,43 @@ class Workspace:
             cv_path=row["cv_path"] or "", cover_letter_path=row["cover_letter_path"] or "",
             email_path=row["email_path"] or "", history=json.loads(row["history"] or "[]"))
 
+    @synchronized
     def applications(self) -> list[Application]:
         rows = self._conn.execute(
             "SELECT * FROM applications ORDER BY updated_at DESC, rowid DESC").fetchall()
         return [self._row_to_application(r) for r in rows]
 
+    @synchronized
     def get_application(self, application_id: str) -> Application | None:
         row = self._conn.execute("SELECT * FROM applications WHERE application_id=?",
                                  (application_id,)).fetchone()
         return self._row_to_application(row) if row else None
 
+    @synchronized
     def application_for_job(self, job_id: str) -> Application | None:
         row = self._conn.execute(
             "SELECT * FROM applications WHERE job_id=? ORDER BY rowid DESC LIMIT 1",
             (job_id,)).fetchone()
         return self._row_to_application(row) if row else None
 
+    @synchronized
     def delete_application(self, application_id: str) -> None:
         self._conn.execute("DELETE FROM applications WHERE application_id=?", (application_id,))
         self._conn.commit()
 
+    @synchronized
     def delete_job(self, job_id: str) -> None:
         self._conn.execute("DELETE FROM jobs WHERE job_id=?", (job_id,))
         self._conn.commit()
 
+    @synchronized
     def clear_jobs(self) -> None:
         self._conn.execute("DELETE FROM applications")
         self._conn.execute("DELETE FROM jobs")
         self._conn.commit()
 
     # -- stats ------------------------------------------------------------- #
+    @synchronized
     def stats(self) -> dict:
         apps = self.applications()
         by_status: dict[str, int] = {s.value: 0 for s in ApplicationStatus}
@@ -921,6 +983,7 @@ class Workspace:
         settings.data_dir = settings.data_dir or str(self.root)
         self.settings_path.write_text(json.dumps(settings.to_dict(), indent=2), encoding="utf-8")
 
+    @synchronized
     def close(self) -> None:
         try:
             self._conn.close()

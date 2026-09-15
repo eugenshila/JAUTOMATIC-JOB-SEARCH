@@ -11,7 +11,7 @@ from ..models import JobPosting
 from ..services.application_pipeline import MatchResult, match_job
 from . import theme as th
 
-COLUMNS = ["Match", "Role", "Company", "Location", "Salary", "Posted", "Source", "Tracked"]
+COLUMNS = ["Match", "Role", "Company", "Location", "Salary", "Posted", "Source"]
 
 
 class JobSearchTab(QWidget):
@@ -115,8 +115,8 @@ class JobSearchTab(QWidget):
         self.table.itemSelectionChanged.connect(self._show_selected)
         self.table.doubleClicked.connect(self._prepare_selected)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for column in (2, 3, 4, 5, 6, 7, 0):
+        header.setSectionResizeMode(1, QHeaderView.Stretch)          # role widens first
+        for column in (0, 2, 3, 4, 5, 6):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         table_card.add(self.table)
         table_actions = QHBoxLayout()
@@ -148,15 +148,18 @@ class JobSearchTab(QWidget):
         detail_card.add(self.match_summary)
         detail_card.add(self.tags_line)
         detail_card.add(self.description)
+        detail_card.add(th.button("Prepare materials", "primary",
+                                  "Generate the CV, cover letter and e-mail for this posting",
+                                  self._prepare_selected))
         detail_actions = QHBoxLayout()
-        detail_actions.addWidget(th.button("Prepare materials", "primary", "",
-                                           self._prepare_selected))
-        detail_actions.addWidget(th.button("Open posting", "ghost", "", self._open_selected))
+        detail_actions.setSpacing(6)
+        detail_actions.addWidget(th.button("Open posting", "default", "", self._open_selected))
         detail_actions.addWidget(th.button("Copy link", "ghost", "", self._copy_link))
+        detail_actions.addStretch(1)
         detail_card.add_layout(detail_actions)
-        detail_card.setMinimumWidth(360)
+        detail_card.setMinimumWidth(380)
         splitter.addWidget(detail_card)
-        splitter.setSizes([820, 420])
+        splitter.setSizes([860, 430])
 
         self.ctx.add_header_action("search", th.button("Search job boards", "primary", "",
                                              lambda: self.start_search(False)))
@@ -208,10 +211,8 @@ class JobSearchTab(QWidget):
             limit_per_source=self.per_source.value())
 
         def work():  # noqa: ANN202
-            return self.ctx.pipeline.search_and_import(
-                query.text, self.location.text().strip(), sources=sources,
-                remote_only=self.remote_only.isChecked(), min_salary=self.min_salary.value(),
-                limit_per_source=self.per_source.value())
+            outcome = self.ctx.pipeline.scraper.search(query)
+            return outcome, self.ctx.pipeline.import_jobs(outcome.jobs)
 
         def done(result) -> None:  # noqa: ANN001
             self.progress.setVisible(False)
@@ -228,7 +229,7 @@ class JobSearchTab(QWidget):
             if not outcome.jobs:
                 level = "warning"
             self.ctx.notify(message, level)
-            self.ctx._update_meta()
+            self.ctx.update_meta()
             for tab in ("dashboard", "applications"):
                 if hasattr(self.ctx.tabs.get(tab), "refresh"):
                     self.ctx.tabs[tab].refresh()
@@ -277,19 +278,24 @@ class JobSearchTab(QWidget):
         self.table.setRowCount(len(rows))
         tracked = {app.job_id for app in self.ctx.workspace.applications()}
         for index, (job, match) in enumerate(rows):
+            is_tracked = job.job_id in tracked
             match_item = QTableWidgetItem(f"{match.score}")
             match_item.setTextAlignment(Qt.AlignCenter)
             match_item.setForeground(QColor(th.ScoreBar.score_color(match.score)))
             match_item.setToolTip(" · ".join(match.reasons) or "no reasons recorded")
             match_item.setData(Qt.UserRole, index)
             self.table.setItem(index, 0, match_item)
-            self.table.setItem(index, 1, QTableWidgetItem(job.title))
+            title_item = QTableWidgetItem(f"✔  {job.title}" if is_tracked else job.title)
+            if is_tracked:
+                title_item.setToolTip("Already in your tracker")
+            self.table.setItem(index, 1, title_item)
             self.table.setItem(index, 2, QTableWidgetItem(job.company))
-            self.table.setItem(index, 3, QTableWidgetItem(job.display_location))
-            self.table.setItem(index, 4, QTableWidgetItem(job.salary_text))
+            self.table.setItem(index, 3, QTableWidgetItem(job.short_location))
+            salary_item = QTableWidgetItem(job.salary_short)
+            salary_item.setToolTip(job.salary_text)
+            self.table.setItem(index, 4, salary_item)
             self.table.setItem(index, 5, QTableWidgetItem(job.posted_text))
             self.table.setItem(index, 6, QTableWidgetItem(job.source))
-            self.table.setItem(index, 7, QTableWidgetItem("yes" if job.job_id in tracked else ""))
         self.table.resizeRowsToContents()
         if rows:
             self.table.selectRow(0)
@@ -297,13 +303,16 @@ class JobSearchTab(QWidget):
     def _mark_tracked(self) -> None:
         tracked = {app.job_id for app in self.ctx.workspace.applications()}
         for row in range(self.table.rowCount()):
-            index = self.table.item(row, 0)
-            if index is None:
+            if self.table.item(row, 0) is None:
                 continue
             job = self._job_for_row(row)
-            if job is not None:
-                self.table.setItem(row, 7, QTableWidgetItem(
-                    "yes" if job.job_id in tracked else ""))
+            if job is None:
+                continue
+            is_tracked = job.job_id in tracked
+            item = QTableWidgetItem(f"✔  {job.title}" if is_tracked else job.title)
+            if is_tracked:
+                item.setToolTip("Already in your tracker")
+            self.table.setItem(row, 1, item)
 
     def _job_for_row(self, row: int) -> JobPosting | None:
         item = self.table.item(row, 0)

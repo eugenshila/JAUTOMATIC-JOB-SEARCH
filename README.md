@@ -159,7 +159,7 @@ jautomatic/
     main_window.py                   window shell, background workers, app state
     theme.py                         dark/light palettes, shared widgets
     dashboard_tab.py  profile_tab.py  job_search_tab.py  applications_tab.py  settings_tab.py
-tests/                               pytest-style unittest suite (84 tests)
+tests/                               stdlib unittest suite (85 tests, no network)
 tools/screenshot.py                  head-less UI driver used for the screenshots above
 tools/genstubs.py                    stub libs so PySide6 runs in headless/CI containers
 ```
@@ -167,7 +167,7 @@ tools/genstubs.py                    stub libs so PySide6 runs in headless/CI co
 ## Development
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # 84 tests, no network needed
+.venv/bin/python -m unittest discover -s tests -t .   # 85 tests, no network needed
 .venv/bin/ruff check jautomatic main.py tools tests   # lint
 .venv/bin/python main.py --selftest                   # end-to-end smoke test
 ```
@@ -175,6 +175,11 @@ tools/genstubs.py                    stub libs so PySide6 runs in headless/CI co
 The scraping tests run against realistic canned payloads of every board, so the suite needs
 no network. `tests/fixtures.py` holds those payloads — update them when a board changes
 shape.
+
+`tools/screenshot.py` additionally drives the real UI offscreen end-to-end (seeds demo data,
+runs the search tab through its worker, prepares documents, opens a preview, checks the
+follow-up reminder) and writes the PNGs used above — a useful regression check after UI
+changes.
 
 Headless/CI note: PySide6 links against `libGL`, `libEGL`, `libxkbcommon` and `libdbus-1`,
 which slim containers often lack (and you cannot `apt-get install` without root). Build

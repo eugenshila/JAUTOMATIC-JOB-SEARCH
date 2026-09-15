@@ -57,6 +57,12 @@ def main() -> int:
     app = QApplication(sys.argv[:1])
     window = MainWindow(data_dir=data_dir)
     apply_theme(app, args.theme)
+
+    # Screenshots must be reproducible, so capture with the bundled offline source
+    # (the network boards behave differently depending on where the app runs).
+    settings = window.settings
+    settings.enabled_sources = ["sample"]
+    window.save_settings(settings)
     window.resize(1440, 940)
     window.show()
     pump(app, 400)
@@ -93,8 +99,9 @@ def main() -> int:
         if key == "profile":
             tab.fields["full_name"].setFocus()
         if key == "search":
+            tab.load_defaults()
             tab.start_search(import_results=False)
-            pump(app, 3000)
+            pump(app, 15000, until=lambda t=tab: t.table.rowCount() > 0)
         if key == "applications":
             tab.refresh()
             tab.table.selectRow(0)
@@ -131,6 +138,36 @@ def main() -> int:
         print(f"shot: {light_path}")
         window.apply_theme("midnight")
         pump(app, 300)
+
+    # -- background tasks actually run (regression guard) ------------------ #
+    flags = []
+    window.run_task("Counting", lambda: flags.append("ran"))
+    pump(app, 5000, until=lambda: bool(flags))
+    assert flags, "run_task() never executed its callable"
+    print("background worker: callable executed")
+
+    # -- the in-app search flow (GUI -> worker -> table) ------------------- #
+    search_tab = window.tabs["search"]
+    window.go_to("search")
+    search_tab.load_defaults()
+    search_tab.start_search(import_results=False)
+    pump(app, 15000, until=lambda: search_tab.table.rowCount() > 0)
+    assert search_tab.table.rowCount() > 0, "the search tab never filled its table"
+    assert search_tab.ranked and search_tab.ranked[0][1].score >= 0, "results were not ranked"
+    print(f"search tab: {search_tab.table.rowCount()} rows, best score "
+          f"{search_tab.ranked[0][1].score}")
+    selected = search_tab.table.item(0, 1).text()
+    assert selected, "the first result row has no role title"
+    assert search_tab.description.toPlainText().strip(), "detail pane stayed empty"
+    print(f"detail pane: showing “{selected}”")
+
+    # -- document previews are non-modal ---------------------------------- #
+    dialog = window.open_preview("CV preview", materials.cv.text, materials.cv.path)
+    pump(app, 200)
+    assert dialog.isVisible() and window._previews, "preview dialog did not open"
+    dialog.close()
+    pump(app, 200)
+    print("preview dialog: opened and closed without blocking")
 
     # -- assertions --------------------------------------------------------- #
     assert window.workspace.job_count() >= 6, "demo postings were not stored"

@@ -78,6 +78,35 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(again.data_dir, str(self.workspace.root))
 
 
+class ThreadSafetyTests(unittest.TestCase):
+    """The UI imports/generates on a thread pool, so the workspace must cope."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workspace = Workspace(Path(self.tmp.name))
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_concurrent_writes_from_many_threads(self):
+        import concurrent.futures as futures
+
+        def worker(index: int) -> int:
+            job = python_job(url=f"https://example.com/jobs/{index}",
+                             title=f"Backend Engineer {index}")
+            self.workspace.save_jobs([job])
+            application = self.workspace.application_for_job(job.job_id)
+            if application is None:
+                application = Application(job_id=job.job_id)
+            self.workspace.save_application(application)
+            self.workspace.get_application(application.application_id)
+            return len(self.workspace.jobs())
+
+        with futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(worker, range(24)))
+        self.assertEqual(self.workspace.job_count(), 24)
+        self.assertEqual(len(self.workspace.applications()), 24)
+        self.assertEqual(max(results), 24)
+
+
 class MatchingTests(unittest.TestCase):
     def test_strong_match_scores_high(self):
         result = match_job(sample_profile(), python_job())

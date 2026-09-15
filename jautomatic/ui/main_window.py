@@ -77,6 +77,8 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._active_key = "dashboard"
         self._header_actions: dict[str, list[QWidget]] = {}
+        self._previews: list[QWidget] = []
+        self._workers: set[Worker] = set()
         self._qt_settings = QSettings("JAUTOMATIC", "job-search")
 
         self.setWindowTitle(f"{APP_TITLE} {__version__}")
@@ -215,7 +217,7 @@ class MainWindow(QMainWindow):
                 tab.refresh()
             except Exception as exc:  # noqa: BLE001 - never let refresh kill the UI
                 self.notify(f"Could not refresh the {key} view: {exc}", "warning")
-        self._update_meta()
+        self.update_meta()
 
     def refresh_current_tab(self) -> None:
         key = self.stack.currentWidget().property("nav_key") or "dashboard"
@@ -228,17 +230,27 @@ class MainWindow(QMainWindow):
                     tab.refresh()
                 except Exception as exc:  # noqa: BLE001
                     self.notify(f"Refresh problem: {exc}", "warning")
-        self._update_meta()
+        self.update_meta()
 
     def run_task(self, description: str, fn, on_done=None, on_error=None, *args,
                  **kwargs) -> Worker:  # noqa: ANN001, ANN003, ANN201
-        """Run ``fn`` in the background; callbacks fire on the GUI thread."""
+        """Run ``fn`` in the background; callbacks fire on the GUI thread.
+
+        The worker is kept in ``self._workers`` for the duration of the task: PySide6
+        does not keep a Python reference to a ``QRunnable`` handed to ``QThreadPool``,
+        so a worker nobody points at is garbage collected before it ever runs.
+        """
         worker = Worker(fn, *args, **kwargs)
+        self._workers.add(worker)
         self._busy += 1
         self.set_status(f"{description}…")
         self.setCursor(Qt.BusyCursor)
 
+        def forget() -> None:
+            self._workers.discard(worker)
+
         def finish(result) -> None:  # noqa: ANN001
+            forget()
             self._task_finished()
             if on_done is not None:
                 try:
@@ -247,6 +259,7 @@ class MainWindow(QMainWindow):
                     self.notify(f"Something went wrong handling the result: {exc}", "error")
 
         def fail(message: str) -> None:
+            forget()
             self._task_finished()
             self.notify(message, "error")
             if on_error is not None:
@@ -263,7 +276,7 @@ class MainWindow(QMainWindow):
             self.unsetCursor()
             if self._busy == 0:
                 self.set_status("Ready")
-        self._update_meta()
+        self.update_meta()
 
     def set_status(self, text: str) -> None:
         if not self._closing:
@@ -285,7 +298,7 @@ class MainWindow(QMainWindow):
         box.setDefaultButton(QMessageBox.No)
         return box.exec() == QMessageBox.Yes
 
-    def _update_meta(self) -> None:
+    def update_meta(self) -> None:
         stats = self.workspace.stats()
         busy = " · working…" if self._busy else ""
         self.status_meta.setText(
@@ -304,7 +317,7 @@ class MainWindow(QMainWindow):
     def save_profile(self, profile: Profile) -> None:
         self.profile = profile
         self.workspace.save_profile(profile)
-        self._update_meta()
+        self.update_meta()
 
     def save_settings(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -331,9 +344,25 @@ class MainWindow(QMainWindow):
             for widget in widgets:
                 widget.setVisible(key == self._active_key)
 
-    def open_preview(self, title: str, markdown: str, path: str | Path | None = None) -> None:
+    def open_preview(self, title: str, markdown: str,
+                     path: str | Path | None = None) -> th.MarkdownPreviewDialog:
+        """Show a generated document in a (non-modal) preview window.
+
+        Non-modal on purpose: the window keeps working while a document is on
+        screen, and scripts/tests can inspect the dialog without blocking.
+        """
         dialog = th.MarkdownPreviewDialog(title, markdown, path, self)
-        dialog.exec()
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        self._previews.append(dialog)
+        dialog.destroyed.connect(lambda *_, d=dialog: self._forget_preview(d))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def _forget_preview(self, dialog: QWidget) -> None:
+        if dialog in self._previews:
+            self._previews.remove(dialog)
 
     # -------------------------------------------------------- lifecycle   #
     def _restore_geometry(self) -> None:
@@ -349,6 +378,7 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("geometry", self.saveGeometry())
         self._closing = True
         self.pool.waitForDone(800)
+        self._workers.clear()
         self.workspace.close()
         super().closeEvent(event)
 

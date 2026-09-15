@@ -280,7 +280,7 @@ class SettingsTab(QWidget):
         self.status_line.setText("Saved.")
         self.ctx.notify("Settings saved.", "success")
         self.ctx.refresh_all()
-        self.ctx._update_meta()
+        self.ctx.update_meta()
 
     def _apply_theme(self) -> None:
         name = self.theme_combo.currentData() or "midnight"

@@ -480,7 +480,7 @@ class ProfileTab(QWidget):
         self.status_line.setText("Saved.")
         self.ctx.notify("Profile saved.", "success")
         self._update_completeness()
-        self.ctx._update_meta()
+        self.ctx.update_meta()
 
     def _load_sample(self) -> None:
         if not self.ctx.confirm("Load example profile",

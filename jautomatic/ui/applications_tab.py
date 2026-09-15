@@ -97,7 +97,13 @@ class ApplicationsTab(QWidget):
         splitter.addWidget(table_card)
 
         detail_card = th.Card("Application")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
         self.detail_title = th.label("Select an application", "title", wrap=True)
+        self.status_chip = th.StatusChip()
+        self.status_chip.setVisible(False)
+        title_row.addWidget(self.detail_title, 1)
+        title_row.addWidget(self.status_chip, 0, Qt.AlignTop)
         self.detail_meta = th.label("", "small", wrap=True)
         status_row = QHBoxLayout()
         self.status_combo = QComboBox()
@@ -107,7 +113,7 @@ class ApplicationsTab(QWidget):
         status_row.addWidget(self.status_combo, 1)
         status_row.addWidget(th.button("Apply", "primary", "Update the status and log it",
                                        self._apply_status))
-        detail_card.add(self.detail_title)
+        detail_card.add_layout(title_row)
         detail_card.add(self.detail_meta)
         detail_card.add_layout(status_row)
 
@@ -235,6 +241,7 @@ class ApplicationsTab(QWidget):
         return None
 
     def _clear_detail(self) -> None:
+        self.status_chip.setVisible(False)
         self.detail_title.setText("No applications match the filters")
         self.detail_meta.setText("")
         self.notes.setPlainText("")
@@ -256,6 +263,8 @@ class ApplicationsTab(QWidget):
         if app.follow_up_due:
             bits.append("FOLLOW-UP DUE")
         self.detail_meta.setText(" · ".join(b for b in bits if b))
+        self.status_chip.setVisible(True)
+        self.status_chip.set_status(row.status)
         index = self.status_combo.findData(app.status)
         self.status_combo.setCurrentIndex(max(0, index))
         if self.notes.toPlainText() != app.notes:
@@ -295,7 +304,7 @@ class ApplicationsTab(QWidget):
         self.ctx.notify(f"{row.title} → {status.label}", "success")
         self.refresh()
         self.ctx.tabs["dashboard"].refresh()
-        self.ctx._update_meta()
+        self.ctx.update_meta()
 
     def _prepare(self) -> None:
         row = self._current()
@@ -377,7 +386,7 @@ class ApplicationsTab(QWidget):
         self.ctx.workspace.delete_application(row.application.application_id)
         self.ctx.notify("Application removed.", "info")
         self.refresh()
-        self.ctx._update_meta()
+        self.ctx.update_meta()
 
     def _recompute(self) -> None:
         def done(updated) -> None:  # noqa: ANN001

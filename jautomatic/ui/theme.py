@@ -176,6 +176,17 @@ def apply_theme(app: QApplication, name: str = DEFAULT_THEME) -> Theme:
     return theme
 
 
+def tint(color: str, alpha: float) -> str:
+    """``rgba()`` string for a translucent wash of ``color``.
+
+    Qt style sheets read eight-digit hex as #AARRGGBB, so ``"#3ecf8e22"`` turns
+    into a muddy olive instead of a soft green - always use rgba() for alpha.
+    """
+    value = QColor(color)
+    alpha = max(0.0, min(1.0, float(alpha)))
+    return f"rgba({value.red()}, {value.green()}, {value.blue()}, {alpha:.2f})"
+
+
 def current_theme() -> Theme:
     app = QApplication.instance()
     name = ""
@@ -356,8 +367,8 @@ class StatusChip(QLabel):
         text = getattr(status, "label", str(status))
         self.setText(text)
         self.setStyleSheet(
-            f"background: {QColor(color).name()}33; color: {color}; "
-            f"border: 1px solid {QColor(color).name()}66; border-radius: 9px; "
+            f"background: {tint(color, 0.16)}; color: {color}; "
+            f"border: 1px solid {tint(color, 0.45)}; border-radius: 9px; "
             f"padding: 2px 9px; font-size: 11px; font-weight: 700;")
 
 
@@ -436,8 +447,8 @@ class Toast(QFrame):
         glyph = {"info": "ℹ", "success": "✔", "warning": "⚠", "error": "✖"}.get(level, "ℹ")
         self.glyph.setText(glyph)
         self.message.setText(text)
-        self.setStyleSheet(f"background: {QColor(color).name()}22; border: 1px solid "
-                           f"{QColor(color).name()}66; border-radius: 8px;")
+        self.setStyleSheet(f"background: {tint(color, 0.14)}; border: 1px solid "
+                           f"{tint(color, 0.45)}; border-radius: 8px;")
         self.glyph.setStyleSheet(f"color: {color}; font-weight: 700;")
         self.setVisible(True)
         self._timer.start(timeout_ms)
@@ -529,7 +540,7 @@ def mono_font(size: int = 11) -> QFont:
     return font
 
 
-__all__ = ["PALETTES", "DEFAULT_THEME", "Theme", "apply_theme", "current_theme", "label",
+__all__ = ["PALETTES", "DEFAULT_THEME", "Theme", "apply_theme", "current_theme", "tint", "label",
            "title_label", "clear_layout", "hline", "button", "open_path", "open_in_browser",
            "open_in_file_manager", "Card", "StatCard", "StatusChip", "ScoreBar", "Toast",
            "MarkdownPreviewDialog", "EmptyState", "mono_font", "GLYPHS"]
