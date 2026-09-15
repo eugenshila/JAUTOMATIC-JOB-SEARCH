@@ -1,0 +1,76 @@
+JAUTOMATIC JOB SEARCH
+
+END USER LICENCE AGREEMENT (PROPRIETARY, ALL RIGHTS RESERVED)
+
+Copyright (c) 2026 JAUTOMATIC. All rights reserved.
+
+This End User Licence Agreement ("Agreement") is a legal agreement between you
+(individually, or the organisation you represent) and JAUTOMATIC ("we", "us")
+for the JAUTOMATIC JOB SEARCH software, including the Windows installer, any
+updates and the accompanying documentation (together, the "Software").
+
+By downloading, installing or running the Software you accept this Agreement.
+If you do not accept it, do not install or use the Software.
+
+1. LICENCE GRANT
+   Subject to this Agreement, we grant you a personal, non-exclusive,
+   non-transferable, revocable licence to install and run one copy of the
+   Software on each computer you own or control, for your own lawful use. An
+   organisation may install the Software on any number of its own machines for
+   its employees' use.
+
+2. RESTRICTIONS
+   You may not: sublicense, rent, lease or sell the Software; remove or alter
+   any copyright, trademark or other proprietary notice; decompile,
+   disassemble or otherwise reverse engineer the Software, except and only to
+   the extent that applicable law expressly permits despite this limitation;
+   or use the Software to build a competing product.
+
+3. SOURCE CODE AND THE PUBLIC REPOSITORY
+   Read-only copies of the source code may be published in a public repository
+   for inspection. That publication does not grant any licence to copy, modify,
+   redistribute or create derivative works of the Software, and does not change
+   the terms of this Agreement. Contributions are accepted only under a
+   separate written contributor agreement.
+
+4. THIRD-PARTY COMPONENTS
+   The Software bundles third-party components (for example the Qt/PySide6
+   libraries, python-docx and requests) that are distributed under their own
+   licences, including copyleft licences such as the GNU LGPL. Those licences
+   apply to the respective components and are listed, with the rights they give
+   you (including the right to replace or re-link the bundled libraries), in
+   THIRD-PARTY-NOTICES.md shipped with the Software. Nothing in this Agreement
+   reduces those rights.
+
+5. YOUR DATA
+   The Software stores your profile, documents and application tracker as plain
+   files in your user profile directory. That data belongs to you; we collect
+   nothing and transmit nothing. Uninstalling the Software does not delete
+   your data unless you delete it yourself.
+
+6. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. JOB LISTINGS, SCORES
+   AND GENERATED DOCUMENTS ARE PROVIDED FOR YOUR INFORMATION AND REVIEW ONLY;
+   YOU ARE RESPONSIBLE FOR CHECKING THEM BEFORE USE.
+
+7. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE SHALL NOT BE LIABLE FOR ANY
+   INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, OR FOR ANY
+   LOSS OF DATA, PROFITS OR GOODWILL, ARISING FROM THE USE OR INABILITY TO USE
+   THE SOFTWARE. OUR TOTAL AGGREGATE LIABILITY SHALL NOT EXCEED THE AMOUNT YOU
+   PAID FOR THE SOFTWARE (IF ANY).
+
+8. TERMINATION
+   This Agreement terminates automatically if you breach any of its terms. On
+   termination you must uninstall the Software and delete all copies.
+   Sections 4 to 9 survive termination.
+
+9. GOVERNING LAW AND CHANGES
+   This Agreement is governed by the laws of your country of residence, without
+   regard to conflict-of-law rules. We may update this Agreement with future
+   releases; the version shipped with a release governs your use of that
+   release. Questions: see the project repository issue tracker.
+
+End of Agreement.

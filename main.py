@@ -12,9 +12,11 @@ import argparse
 import json
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from jautomatic import APP_TITLE, __version__
+from jautomatic import runtime
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -23,6 +25,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="where the database and documents live (default: user data dir)")
     parser.add_argument("--selftest", action="store_true",
                         help="run a head-less smoke test of every subsystem and exit")
+    parser.add_argument("--report", metavar="PATH", default=None,
+                        help="with --selftest: also write a JSON report to PATH (the installed "
+                             "build is windowed, so this is how scripts read the result)")
     parser.add_argument("--scrape", metavar="QUERY", default=None,
                         help="run a search from the command line and print the results")
     parser.add_argument("--limit", type=int, default=5,
@@ -36,7 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # --------------------------------------------------------------------------- #
 # head-less modes
 # --------------------------------------------------------------------------- #
-def run_selftest(data_dir: str | None = None) -> int:
+def run_selftest(data_dir: str | None = None, report_path: str | None = None) -> int:
     """Exercise models, scraper (offline), matcher and every document generator."""
     import tempfile
 
@@ -91,8 +96,32 @@ def run_selftest(data_dir: str | None = None) -> int:
     print(f"calendar export: {ics_path.name} ({ics_text.count('BEGIN:VEVENT')} event(s))")
     print(f"stats          : {json.dumps(stats, default=str)}")
     workspace.close()
+    if report_path:
+        write_selftest_report(report_path, {
+            "ok": True,
+            "workspace": str(root),
+            "demo_postings": len(outcome.jobs),
+            "tracked": len(created),
+            "best_match": {"title": best.title, "company": best.company, "score": best.score},
+            "documents": [Path(p).name for p in materials.paths],
+            "follow_up_draft": draft_path.name,
+            "tracker_export": csv_path.name,
+            "calendar_export": {"file": ics_path.name, "events": ics_text.count("BEGIN:VEVENT")},
+            "stats": stats,
+        })
     print("SELFTEST OK")
     return 0
+
+
+def write_selftest_report(report_path: str, payload: dict) -> Path:
+    """Write the machine-readable half of ``--selftest`` (used by the installer test)."""
+    path = Path(report_path).expanduser()
+    report = dict(payload)
+    report.setdefault("runtime", runtime.describe())
+    report.setdefault("finished_at", datetime.now().isoformat(timespec="seconds"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    return path
 
 
 def run_scrape(query: str, limit: int, offline: bool, data_dir: str | None) -> int:
@@ -129,6 +158,7 @@ def run_gui(data_dir: str | None = None) -> int:
     from jautomatic.ui.main_window import MainWindow
     from jautomatic.ui.theme import apply_theme
 
+    runtime.set_app_user_model_id()
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_TITLE)
     app.setApplicationVersion(__version__)
@@ -144,20 +174,52 @@ def run_gui(data_dir: str | None = None) -> int:
     return app.exec()
 
 
+def report_crash(exc: Exception, text: str, gui_mode: bool) -> None:
+    """Leave a trace behind: log file always, message box when there is a GUI.
+
+    The installed build is *windowed* (``console=False``), so ``sys.stderr`` does
+    not exist there - without this the app would simply vanish on a crash and
+    there would be nothing to send in a bug report.
+    """
+    report = runtime.write_crash_report(text)
+    detail = f"\nA crash report was written to:\n  {report}" if report else ""
+    if sys.stderr is not None:
+        print(text, file=sys.stderr)
+        print(f"\nJAUTOMATIC crashed.{detail}\n"
+              "Re-run with --selftest to isolate the problem.", file=sys.stderr)
+    if not gui_mode:
+        return
+    try:  # pragma: no cover - depends on a working Qt install
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        app = QApplication.instance() or QApplication(sys.argv[:1])
+        box = QMessageBox(app)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle(f"{APP_TITLE} - something went wrong")
+        box.setText("JAUTOMATIC could not start or hit an unexpected error.")
+        box.setInformativeText(
+            (f"The details were saved to:\n{report}\n\n" if report else "")
+            + f"Error: {type(exc).__name__}: {exc}\n\n"
+            + "Please include that file when reporting the problem.")
+        box.exec()
+    except Exception:  # noqa: BLE001 - the crash report is the fallback
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    runtime.freeze_support()
     args = parse_args(argv)
+    gui_mode = not (args.selftest or args.scrape)
     try:
         if args.selftest:
-            return run_selftest(args.data_dir)
+            return run_selftest(args.data_dir, args.report)
         if args.scrape:
             return run_scrape(args.scrape, args.limit, args.offline, args.data_dir)
         return run_gui(args.data_dir)
     except KeyboardInterrupt:
         return 130
-    except Exception:  # noqa: BLE001 - last-resort guard so the window never dies silently
-        traceback.print_exc()
-        print("\nJAUTOMATIC crashed. Please re-run with --selftest to isolate the problem.",
-              file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - last-resort guard so the window never dies silently
+        report_crash(exc, traceback.format_exc(), gui_mode)
         return 1
 
 

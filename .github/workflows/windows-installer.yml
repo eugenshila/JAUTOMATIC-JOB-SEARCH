@@ -1,0 +1,132 @@
+name: Windows installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create a GitHub Release (otherwise artefacts only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write     # create the release
+  id-token: write     # OIDC for Azure Artifact Signing
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  build:
+    name: Build, sign and verify the MSI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Unit tests (gate the release)
+        run: python -m unittest discover -s tests -t .
+
+      # ---------------- stage 1: freeze ------------------------------- #
+      - name: Freeze the application (PyInstaller onedir)
+        run: packaging\build.ps1 -Stage freeze -SkipTests
+        shell: powershell
+
+      # ---------------- sign the payload ------------------------------ #
+      # Azure Artifact Signing (the service formerly called Trusted Signing).
+      # Runs only when the Azure secrets/vars are configured; unsigned builds
+      # still complete so the pipeline stays usable for forks.
+      - name: Azure login (OIDC)
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' && secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign JAUTOMATIC.exe
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' && secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\JAUTOMATIC\JAUTOMATIC.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: true
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+
+      # ---------------- stage 2: the MSI ------------------------------ #
+      - name: Build the MSI (WiX v5)
+        run: packaging\build.ps1 -Stage package
+        shell: powershell
+
+      - name: Sign the MSI
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' && secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # ---------------- verify on this (clean-ish) machine ------------ #
+      - name: Clean install / uninstall verification
+        run: >
+          packaging\verify-install.ps1
+          -MsiPath (Get-ChildItem dist\*.msi | Select-Object -First 1 -ExpandProperty FullName)
+          -RequireSignature:${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+          -Report dist\verify-report.json
+        shell: powershell
+
+      - name: Upload build artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            dist/*.msi
+            dist/SHA256SUMS.txt
+            dist/build-info.json
+            dist/verify-report.json
+          if-no-files-found: warn
+
+      # ---------------- publish --------------------------------------- #
+      - name: Create GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          packaging/make_release_notes.ps1 -Out "$env:RUNNER_TEMP/release-notes.md" `
+            -RunUrl "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $msi = (Get-ChildItem dist/*.msi).FullName
+          gh release create "${{ github.ref_name }}" `
+            --title "JAUTOMATIC JOB SEARCH $((Get-Content -Raw dist/build-info.json | ConvertFrom-Json).msi_version)" `
+            --notes-file "$env:RUNNER_TEMP/release-notes.md" --verify-tag $msi dist/SHA256SUMS.txt

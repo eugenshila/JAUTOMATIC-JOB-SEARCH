@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v5 source for the JAUTOMATIC JOB SEARCH MSI.
+
+  Per-machine ("Program Files") package for x64, built by packaging/build.ps1:
+
+      wix build packaging/wix/JAUTOMATIC.wxs -arch x64 ^
+          -bindpath App=dist\JAUTOMATIC -bindpath Assets=packaging\assets ^
+          -bindpath Wix=packaging\wix -d ProductVersion=1.0.0 ... ^
+          -out dist\JAUTOMATIC-JOB-SEARCH-1.0.0-x64.msi
+
+  The payload (the PyInstaller onedir output) is harvested with the v5 `Files`
+  element - the supported replacement for heat.exe - which produces one
+  component per file, exactly what the component rules want.
+
+  Identity notes:
+  * UpgradeCode is fixed forever (packaging/build_info.py). Never regenerate it:
+    a new code installs side-by-side instead of upgrading.
+  * ProductCode is left to WiX (new GUID per build) so every build is a valid
+    major-upgrade candidate of the previous one.
+  * Version has three fields only; MSI ignores a fourth when comparing.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="$(var.ProductName)"
+           Manufacturer="$(var.Publisher)"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Scope="perMachine"
+           Language="1033"
+           Compressed="yes">
+
+    <!-- MSI's VersionNT is unreliable on Win8.1+, so compare OS build numbers:
+         10240 is the first Windows 10 release. 64-bit only (PySide6 ships x64). -->
+    <Launch Message="$(var.ProductName) requires 64-bit Windows 10 or later."
+            Condition="VersionNT64 AND WindowsBuildNumber &gt;= $(var.MinWindowsBuild)" />
+
+    <MajorUpgrade Schedule="afterInstallExecute"
+                  AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of $(var.ProductName) is already installed. Remove it first (Settings - Apps), or get the newest installer from $(var.HelpLink)/releases." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Add/Remove Programs entries -->
+    <Icon Id="ProductIcon" SourceFile="!(bindpath.Assets)\app_icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Property Id="ARPHELPLINK" Value="$(var.HelpLink)" />
+    <Property Id="ARPURLINFOABOUT" Value="$(var.HelpLink)" />
+    <Property Id="ARPCONTACT" Value="$(var.HelpLink)/issues" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPINSTALLLOCATION" Value="INSTALLFOLDER" />
+
+    <!-- Never leave the app running across an upgrade/uninstall: ask it to
+         close politely first, then terminate it. Our data lives in the user
+         profile, so closing the process is always safe. -->
+    <util:CloseApplication Id="CloseJautomatic"
+                           Target="$(var.ExeName)"
+                           Description="$(var.ProductName) is still running and must close to continue."
+                           CloseMessage="yes"
+                           ElevatedCloseMessage="yes"
+                           EndSessionMessage="yes"
+                           PromptToClose="yes"
+                           Timeout="10"
+                           RebootPrompt="no"
+                           TerminateProcess="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="$(var.InstallFolder)" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramsFolder" Name="$(var.Publisher)" />
+    </StandardDirectory>
+
+    <DirectoryRef Id="AppProgramsFolder">
+      <Component Id="StartMenuShortcuts">
+        <Shortcut Id="AppStartMenuShortcut"
+                  Name="$(var.ProductName)"
+                  Description="Local-first job search autopilot"
+                  Target="[INSTALLFOLDER]$(var.ExeName)"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="ProductIcon"
+                  IconIndex="0" />
+        <Shortcut Id="UninstallShortcut"
+                  Name="Uninstall $(var.ProductName)"
+                  Description="Remove $(var.ProductName) from this computer"
+                  Target="[System64Folder]msiexec.exe"
+                  Arguments="/x [ProductCode]" />
+        <RemoveFolder Id="RemoveAppProgramsFolder" Directory="AppProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="$(var.RegistryKey)" Name="StartMenuShortcuts"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main"
+             Title="$(var.ProductName)"
+             Description="Application files and Start menu shortcuts"
+             Level="1"
+             Display="hidden"
+             AllowAdvertise="no"
+             Absent="disallow"
+             ConfigurableDirectory="INSTALLFOLDER">
+      <!-- the frozen app: JAUTOMATIC.exe + _internal/** -->
+      <Files Directory="INSTALLFOLDER" Include="!(bindpath.App)\**">
+        <Exclude Files="!(bindpath.App)\**\*.pdb" />
+      </Files>
+      <ComponentRef Id="StartMenuShortcuts" />
+    </Feature>
+
+    <!-- UI ================================================================== -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="!(bindpath.Wix)\LICENSE.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="!(bindpath.Assets)\app_banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="!(bindpath.Assets)\app_dialog.bmp" />
+
+    <!-- "Launch JAUTOMATIC JOB SEARCH" checkbox on the final dialog. The app is
+         started *unelevated*: a per-machine install runs elevated, and leaving
+         the app running as admin would put the data dir in the wrong profile. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch $(var.ProductName)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <SetProperty Id="WixUnelevatedShellExecTarget" Value="[INSTALLFOLDER]$(var.ExeName)"
+                 Before="LaunchApplication" Sequence="ui" />
+    <CustomAction Id="LaunchApplication"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixUnelevatedShellExec"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+  </Package>
+</Wix>

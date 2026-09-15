@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "wix": {
+      "version": "5.0.2",
+      "commands": [ "wix" ],
+      "rollForward": false,
+      "extensions": [
+        { "WixToolset.UI.wixext": "5.0.2" },
+        { "WixToolset.Util.wixext": "5.0.2" }
+      ]
+    }
+  }
+}

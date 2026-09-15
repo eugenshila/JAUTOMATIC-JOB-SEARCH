@@ -22,6 +22,9 @@ dist/
 .stublibs/
 .screenshot-data/
 
+# scratch space for previews/conversions (never part of the project)
+.cache/
+
 # app data (when running with --data-dir .)
 data/
 *.sqlite3

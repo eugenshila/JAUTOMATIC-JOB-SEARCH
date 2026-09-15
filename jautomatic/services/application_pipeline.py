@@ -114,7 +114,7 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult: 
         result.score += round(W_TITLE * min(1.0, overlap * 1.5))
 
     # location / remote
-    locations = [l.lower() for l in profile.desired_locations if l.strip()]
+    locations = [loc.lower() for loc in profile.desired_locations if loc.strip()]
     if job.remote and (profile.remote_only or not locations):
         result.score += W_LOCATION
         result.reasons.append("remote-friendly and you are open to remote")

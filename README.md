@@ -75,6 +75,14 @@ and are out of scope by design.
 
 ## Install & run
 
+**Windows:** grab the signed MSI from the
+[releases page](https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH/releases)
+(`JAUTOMATIC-JOB-SEARCH-<version>-x64.msi`, SHA-256 next to it) and double-click it -
+a per-machine install into `Program Files`, with silent/Group Policy/Intune deployment,
+upgrade and uninstall behaviour documented in
+[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md). Everything below is for running from
+source (any OS) or building the installer yourself (`packaging/README.md`).
+
 ```bash
 git clone https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH.git
 cd JAUTOMATIC-JOB-SEARCH
@@ -120,6 +128,7 @@ settings.json         sources, defaults, theme
 jautomatic.sqlite3    postings + applications (SQLite, WAL)
 documents/            generated CVs, cover letters, e-mail drafts, follow-ups
 exports/              CSV tracker exports + .ics calendar exports
+logs/                 crash reports, if the app ever dies on start-up
 ```
 
 Deleting the folder is a full reset — there is nothing hidden elsewhere.
@@ -203,9 +212,14 @@ tools/genstubs.py                    stub libs so PySide6 runs in headless/CI co
 ## Development
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # 146 tests, no network needed
-.venv/bin/ruff check jautomatic main.py tools tests   # lint
+.venv/bin/python -m unittest discover -s tests -t .   # 189 tests, no network needed
+.venv/bin/ruff check jautomatic main.py tools tests packaging   # lint (ruff.toml)
 .venv/bin/python main.py --selftest                   # end-to-end smoke test
+
+# packaging guards (also run in CI and by packaging/build.ps1)
+.venv/bin/python tools/make_assets.py --check         # installer art is committed & current
+.venv/bin/python packaging/make_eula.py --check       # installer EULA derived from LICENSE
+.venv/bin/python packaging/check_notices.py           # shipped deps all have licence notices
 ```
 
 The scraping tests run against realistic canned payloads of every board, so the suite needs
@@ -253,4 +267,6 @@ Everything runs locally. The only outbound requests are the job-board queries yo
 * More CV templates / user-supplied template files
 * Interview-prep notes and question banks per application
 * ~~Calendar (ICS) export for interviews and follow-ups~~ — done
-* Installer packaging (MSI/PyInstaller) — intentionally not part of this repository yet
+* ~~Installer packaging (MSI/PyInstaller)~~ — done: per-machine WiX v5 MSI built by
+  `packaging/build.ps1`, signed + verified in CI (see `packaging/README.md` for the
+  deferred follow-ups found during the packaging review)
