@@ -4,8 +4,18 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLineEdit, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import APP_TITLE, __version__
 from ..models import AppSettings
@@ -19,7 +29,7 @@ class SettingsTab(QWidget):
     page_title = "Settings"
     page_subtitle = "Sources, defaults, documents and where your data lives"
 
-    def __init__(self, ctx) -> None:  # noqa: ANN001 - MainWindow
+    def __init__(self, ctx) -> None:
         super().__init__()
         self.ctx = ctx
         self.source_boxes: dict[str, QCheckBox] = {}
@@ -66,7 +76,10 @@ class SettingsTab(QWidget):
         self.adzuna_key.setPlaceholderText("Adzuna app key")
         self.adzuna_country = QComboBox()
         self.adzuna_country.setEditable(True)
-        self.adzuna_country.addItems(["gb", "us", "de", "fr", "nl", "pl", "ca", "au", "in", "es"])
+        self.adzuna_country.addItems([
+            "gb", "us", "de", "fr", "nl", "pl", "ca", "au", "in", "es",
+            "it", "nz", "at", "ie", "be", "ch", "mx", "br", "sg", "id", "za",
+        ])
         for widget in (self.adzuna_id, self.adzuna_key):
             widget.textChanged.connect(self._mark_dirty)
         self.adzuna_country.currentTextChanged.connect(self._mark_dirty)
@@ -74,8 +87,9 @@ class SettingsTab(QWidget):
         credentials.addRow("Adzuna app key", self.adzuna_key)
         credentials.addRow("Adzuna country", self.adzuna_country)
         sources.add_layout(credentials)
-        sources.add(th.label("Adzuna is optional — the other three boards need no key at all. "
-                             "Register free at developer.adzuna.com.", "small", wrap=True))
+        sources.add(th.label("Adzuna is optional — Remotive, Arbeitnow, RemoteOK, Himalayas "
+                             "and UAE AI jobs need no key. Register free at "
+                             "developer.adzuna.com.", "small", wrap=True))
         left.addWidget(sources)
 
         # search defaults ------------------------------------------------ #
@@ -91,16 +105,23 @@ class SettingsTab(QWidget):
         self.min_salary.setRange(0, 2_000_000)
         self.min_salary.setSingleStep(1000)
         self.min_salary.setGroupSeparatorShown(True)
+        self.min_match_score = QSpinBox()
+        self.min_match_score.setRange(0, 100)
+        self.min_match_score.setSuffix(" / 100")
+        self.min_match_score.setToolTip("Results below this match score are hidden "
+                                        "from the search table (0 = off)")
         self.remote_only = QCheckBox("Remote postings only")
         self.exclude_keywords = QLineEdit()
         self.exclude_keywords.setPlaceholderText("unpaid, commission only, crypto, doordash")
-        for widget in (self.results_per_source, self.timeout, self.min_salary):
+        for widget in (self.results_per_source, self.timeout, self.min_salary,
+                       self.min_match_score):
             widget.valueChanged.connect(self._mark_dirty)
         self.remote_only.toggled.connect(self._mark_dirty)
         self.exclude_keywords.textChanged.connect(self._mark_dirty)
         form.addRow("Results per source", self.results_per_source)
         form.addRow("Request timeout", self.timeout)
         form.addRow("Minimum salary", self.min_salary)
+        form.addRow("Minimum match score", self.min_match_score)
         form.addRow("", self.remote_only)
         form.addRow("Exclude keywords", self.exclude_keywords)
         search.add_layout(form)
@@ -144,6 +165,34 @@ class SettingsTab(QWidget):
         self.template_status = th.label("", "small", wrap=True)
         documents.add(self.template_status)
         left.addWidget(documents)
+
+        # AI writing (optional, local-only) ------------------------------- #
+        ai = th.Card("AI writing (optional)", "Local AI cover letters — nothing leaves "
+                     "your machine")
+        form = QFormLayout()
+        form.setSpacing(8)
+        self.llm_provider = QComboBox()
+        self.llm_provider.addItem("Off — deterministic template", "none")
+        self.llm_provider.addItem("Local AI (Ollama)", "ollama")
+        self.llm_model = QLineEdit()
+        self.llm_model.setPlaceholderText("llama3.2")
+        self.llm_base_url = QLineEdit()
+        self.llm_base_url.setPlaceholderText("http://localhost:11434")
+        self.llm_provider.currentIndexChanged.connect(self._mark_dirty)
+        self.llm_model.textChanged.connect(self._mark_dirty)
+        self.llm_base_url.textChanged.connect(self._mark_dirty)
+        form.addRow("Writer", self.llm_provider)
+        form.addRow("Model", self.llm_model)
+        form.addRow("Ollama server", self.llm_base_url)
+        ai.add_layout(form)
+        row_ai = QHBoxLayout()
+        row_ai.addWidget(th.button("Test connection", "default", "", self._test_llm))
+        row_ai.addStretch(1)
+        ai.add_layout(row_ai)
+        ai.add(th.label("Requires the free Ollama app (ollama.com) running locally. The "
+                        "tone follows your profile tone. If Ollama is off or slow, the "
+                        "deterministic template is used instead.", "small", wrap=True))
+        left.addWidget(ai)
         left.addStretch(1)
 
         # autopilot ------------------------------------------------------ #
@@ -160,21 +209,77 @@ class SettingsTab(QWidget):
         self.follow_up_days = QSpinBox()
         self.follow_up_days.setRange(1, 90)
         self.follow_up_days.setSuffix(" days")
+        self.follow_up_repeat = QSpinBox()
+        self.follow_up_repeat.setRange(1, 90)
+        self.follow_up_repeat.setSuffix(" days")
+        self.follow_up_nudges = QSpinBox()
+        self.follow_up_nudges.setRange(1, 10)
+        self.follow_up_nudges.setPrefix("max ")
+        self.auto_clear_days = QSpinBox()
+        self.auto_clear_days.setRange(0, 90)
+        self.auto_clear_days.setSpecialValueText("off")
+        self.auto_clear_days.setSuffix(" days")
+        self.auto_clear_days.setToolTip(
+            "Applications that are still discovered/shortlisted (never prepared or sent) "
+            "are archived automatically once they have been tracked for this long. "
+            "0 = off. Runs on startup and each background refresh.")
         self.autopilot.toggled.connect(self._mark_dirty)
         self.autopilot_min_score.valueChanged.connect(self._mark_dirty)
         self.autopilot_max.valueChanged.connect(self._mark_dirty)
         self.follow_up_days.valueChanged.connect(self._mark_dirty)
+        self.follow_up_repeat.valueChanged.connect(self._mark_dirty)
+        self.follow_up_nudges.valueChanged.connect(self._mark_dirty)
+        self.auto_clear_days.valueChanged.connect(self._mark_dirty)
         form.addRow("", self.autopilot)
         form.addRow("Score threshold", self.autopilot_min_score)
         form.addRow("Max per run", self.autopilot_max)
-        form.addRow("Follow-up after", self.follow_up_days)
+        form.addRow("First follow-up after", self.follow_up_days)
+        form.addRow("Between follow-ups", self.follow_up_repeat)
+        form.addRow("Follow-ups (ladder)", self.follow_up_nudges)
+        form.addRow("Auto-clear untouched after", self.auto_clear_days)
         autopilot.add_layout(form)
+        autopilot.add(th.label(
+            "Follow-ups escalate: each draft is more direct, and once the ladder is spent "
+            "the application stops being “due” — mark it interview/offer/rejected to stop "
+            "them sooner.", "small", wrap=True))
+        autopilot.add(th.label(
+            "Untouched = discovered/shortlisted and never prepared or sent. Cleared "
+            "applications are archived (out of the active queue) — the database and "
+            "history are kept, and you can filter them back in.", "small", wrap=True))
         right.addWidget(autopilot)
+
+        # background refresh & notifications ---------------------------- #
+        refresh_card = th.Card("Background refresh",
+                               "Re-scrape the enabled boards on a timer; new roles pop up "
+                               "in a desktop notification")
+        form = QFormLayout()
+        form.setSpacing(8)
+        self.auto_refresh = QCheckBox("Refresh job boards in the background")
+        self.auto_refresh.setToolTip("Runs even while the window is minimized; the Search "
+                                     "tab keeps the latest results")
+        self.auto_refresh_minutes = QSpinBox()
+        self.auto_refresh_minutes.setRange(5, 720)
+        self.auto_refresh_minutes.setSingleStep(5)
+        self.auto_refresh_minutes.setSuffix(" min")
+        self.notify_new = QCheckBox("Notify me when refresh finds fresh roles")
+        self.auto_refresh.toggled.connect(self._mark_dirty)
+        self.auto_refresh_minutes.valueChanged.connect(self._mark_dirty)
+        self.notify_new.toggled.connect(self._mark_dirty)
+        form.addRow("", self.auto_refresh)
+        form.addRow("Every", self.auto_refresh_minutes)
+        form.addRow("", self.notify_new)
+        refresh_card.add_layout(form)
+        refresh_card.add(th.label("It only re-scrapes boards you already enabled and never "
+                                  "auto-applies for anything. Fresh postings are announced in "
+                                  "a tray notification and shown in the Search tab.",
+                                  "small", wrap=True))
+        right.addWidget(refresh_card)
 
         # appearance ----------------------------------------------------- #
         appearance = th.Card("Appearance")
         self.theme_combo = QComboBox()
         self.theme_combo.addItem("Midnight (dark)", "midnight")
+        self.theme_combo.addItem("Black & Green (dark)", "blackgreen")
         self.theme_combo.addItem("Daylight (light)", "daylight")
         self.theme_combo.currentIndexChanged.connect(self._apply_theme)
         appearance.add(self.theme_combo)
@@ -210,9 +315,10 @@ class SettingsTab(QWidget):
         about = th.Card("About")
         about.add(th.label(f"{APP_TITLE} {__version__}", "title"))
         about.add(th.label(
-            "A local-first job-search autopilot: it pulls postings from public job boards, scores "
-            "them against your profile, then writes a tailored CV, cover letter and e-mail draft "
-            "for every application you choose — no accounts, no cloud, no data leaves your machine.",
+            "A local-first job-search autopilot: it pulls postings from public job boards, "
+            "scores them against your profile, then writes a tailored CV, cover letter "
+            "and e-mail draft for every application you choose — no accounts, no cloud, "
+            "no data leaves your machine. Untouched applications are archived automatically.",
             "muted", wrap=True))
         about.add(th.label("Job data: Remotive · Arbeitnow · RemoteOK · Adzuna. "
                            "Documents: python-docx. Interface: PySide6.", "small", wrap=True))
@@ -247,6 +353,7 @@ class SettingsTab(QWidget):
         self.results_per_source.setValue(settings.results_per_source)
         self.timeout.setValue(settings.request_timeout)
         self.min_salary.setValue(settings.min_salary)
+        self.min_match_score.setValue(settings.min_match_score)
         self.remote_only.setChecked(settings.remote_only)
         self.exclude_keywords.setText(settings.exclude_keywords)
         self._fill_templates(keep=settings.cv_template)
@@ -258,7 +365,20 @@ class SettingsTab(QWidget):
         self.autopilot_min_score.setValue(settings.autopilot_min_score)
         self.autopilot_max.setValue(settings.autopilot_max_per_run)
         self.follow_up_days.setValue(settings.follow_up_days)
+        self.follow_up_repeat.setValue(settings.follow_up_repeat_days)
+        self.follow_up_nudges.setValue(settings.follow_up_max_nudges)
+        self.auto_clear_days.setValue(settings.auto_clear_days)
+        self.auto_refresh.setChecked(settings.auto_refresh_enabled)
+        self.auto_refresh_minutes.setValue(settings.auto_refresh_minutes)
+        self.notify_new.setChecked(settings.notify_new_matches)
+        index = self.llm_provider.findData(settings.llm_provider if
+                                           settings.llm_provider in ("none", "ollama") else "none")
+        self.llm_provider.setCurrentIndex(max(0, index))
+        self.llm_model.setText(settings.llm_model)
+        self.llm_base_url.setText(settings.llm_base_url)
+        self.theme_combo.blockSignals(True)
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(settings.theme)))
+        self.theme_combo.blockSignals(False)
         self.status_line.setText("All changes saved.")
 
     def refresh(self) -> None:
@@ -277,6 +397,7 @@ class SettingsTab(QWidget):
         settings.results_per_source = self.results_per_source.value()
         settings.request_timeout = self.timeout.value()
         settings.min_salary = self.min_salary.value()
+        settings.min_match_score = self.min_match_score.value()
         settings.remote_only = self.remote_only.isChecked()
         settings.exclude_keywords = self.exclude_keywords.text().strip()
         settings.cv_template = self.cv_template.currentData() or "modern"
@@ -287,6 +408,15 @@ class SettingsTab(QWidget):
         settings.autopilot_min_score = self.autopilot_min_score.value()
         settings.autopilot_max_per_run = self.autopilot_max.value()
         settings.follow_up_days = self.follow_up_days.value()
+        settings.follow_up_repeat_days = self.follow_up_repeat.value()
+        settings.follow_up_max_nudges = self.follow_up_nudges.value()
+        settings.auto_clear_days = self.auto_clear_days.value()
+        settings.auto_refresh_enabled = self.auto_refresh.isChecked()
+        settings.auto_refresh_minutes = self.auto_refresh_minutes.value()
+        settings.notify_new_matches = self.notify_new.isChecked()
+        settings.llm_provider = self.llm_provider.currentData() or "none"
+        settings.llm_model = self.llm_model.text().strip() or "llama3.2"
+        settings.llm_base_url = self.llm_base_url.text().strip() or "http://localhost:11434"
         return settings
 
     # ------------------------------------------------------------ actions #
@@ -297,6 +427,22 @@ class SettingsTab(QWidget):
         self.ctx.notify("Settings saved.", "success")
         self.ctx.refresh_all()
         self.ctx.update_meta()
+
+    def _test_llm(self) -> None:
+        base = self.llm_base_url.text().strip() or "http://localhost:11434"
+
+        def work():
+            from ..services.cover_letter import ollama_ping
+
+            return ollama_ping(base)
+
+        def done(version) -> None:
+            self.ctx.notify(f"Ollama {version} is reachable at {base}.", "success")
+
+        def failed(message: str) -> None:
+            self.ctx.notify(f"Ollama test failed — {message}", "error")
+
+        self.ctx.run_task("Testing the Ollama connection", work, done, failed)
 
     def _apply_theme(self) -> None:
         name = self.theme_combo.currentData() or "midnight"
@@ -369,11 +515,11 @@ class SettingsTab(QWidget):
         template = self.cv_template.currentData() or "modern"
         profile = self.ctx.profile
 
-        def work():  # noqa: ANN202
+        def work():
             return self.ctx.pipeline.cv_generator.generate(profile, None, template, None,
                                                            self.export_format.currentData())
 
-        def done(document) -> None:  # noqa: ANN001
+        def done(document) -> None:
             if document.warning:
                 self.ctx.notify(document.warning, "warning")
             self.ctx.open_preview(f"CV template · {template_label(document.template)}",
@@ -382,14 +528,14 @@ class SettingsTab(QWidget):
         self.ctx.run_task("Rendering template preview", work, done)
 
     def _export_csv(self) -> None:
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.ctx.notify(f"Exported {path}", "success")
 
         self.ctx.run_task("Exporting tracker CSV",
                           lambda: self.ctx.pipeline.export_tracker_csv(self.ctx.profile), done)
 
     def _export_calendar(self) -> None:
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.ctx.notify(f"Calendar exported to {path}", "success")
             th.open_path(path)
 
@@ -422,4 +568,4 @@ class SettingsTab(QWidget):
         self.ctx.refresh_all()
 
 
-__all__ = ["SettingsTab", "FORMATS"]
+__all__ = ["FORMATS", "SettingsTab"]

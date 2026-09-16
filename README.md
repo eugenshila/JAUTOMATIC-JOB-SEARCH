@@ -1,4 +1,4 @@
-# JAUTOMATIC JOB SEARCH
+﻿# JAUTOMATIC JOB SEARCH
 
 A local-first desktop job-search autopilot. It pulls postings from public job boards,
 scores every one against **your** profile, then writes a tailored CV, cover letter and
@@ -162,7 +162,9 @@ profile actually contains).
 | [Remotive](https://remotive.com) | no | remote roles, searchable JSON API |
 | [Arbeitnow](https://www.arbeitnow.com) | no | European board, JSON API |
 | [RemoteOK](https://remoteok.com) | no | remote-first board, JSON API |
-| [Adzuna](https://developer.adzuna.com) | free app id + key | aggregated listings, country selectable |
+| [Himalayas](https://himalayas.app) | no | remote roles worldwide incl. Kenya/Africa/UAE, JSON API |
+| [UAE AI jobs](https://artificial.ae) | no | UAE AI & tech roles (Dubai, Abu Dhabi), JSON API |
+| [Adzuna](https://developer.adzuna.com) | free app id + key | aggregated listings, 21 countries incl. South Africa |
 | Demo data | no | offline sample postings so the app is always usable |
 
 Sources are queried in parallel; a failing board is reported in the results line ("issues:

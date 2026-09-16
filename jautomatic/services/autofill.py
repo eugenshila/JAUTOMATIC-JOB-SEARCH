@@ -28,8 +28,16 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 __all__ = [
-    "FormField", "SelectOption", "FieldMatch", "FillAction", "FillPlan",
-    "ProfileAnswers", "FIELD_SPECS", "parse_html", "build_plan", "plan_for_html",
+    "FIELD_SPECS",
+    "FieldMatch",
+    "FillAction",
+    "FillPlan",
+    "FormField",
+    "ProfileAnswers",
+    "SelectOption",
+    "build_plan",
+    "parse_html",
+    "plan_for_html",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -458,7 +466,7 @@ class ProfileAnswers:
 
     @classmethod
     def from_profile(cls, profile, application=None, overrides: dict | None = None,
-                     today: date | None = None) -> "ProfileAnswers":
+                     today: date | None = None) -> ProfileAnswers:
         """Build the answer table.  Never invents: missing data stays missing
         (the plan flags those fields for the human)."""
         today = today or date.today()

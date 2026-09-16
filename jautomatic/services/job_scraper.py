@@ -12,23 +12,27 @@ problems are collected per-source into ``FetchResult.error`` so the UI can show
 """
 from __future__ import annotations
 
-import concurrent.futures as futures
+import json
 import random
 import re
 import time
+from concurrent import futures
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from html import unescape
+from typing import ClassVar
+from urllib.parse import urlencode, urlparse
 
 import requests
 
 from ..models import JobPosting, keywords, strip_html
 
 USER_AGENT = (
-    "JAUTOMATIC-JOB-SEARCH/1.0 (+https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH) "
+    "JAUTOMATIC-JOB-SEARCH/1.3 (+https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH) "
     "job-search-desktop-app"
 )
 
-CURRENCY = r"[$€£]|USD|EUR|GBP|PLN|CHF|SEK|NOK|DKK|CAD|AUD|INR|BRL"
+CURRENCY = r"[$€£]|USD|EUR|GBP|PLN|CHF|SEK|NOK|DKK|CAD|AUD|INR|BRL|KES|AED|ZAR|NGN"
 _NUMBER = r"\d[\d.,]*\s*[kK]?"
 MONEY_RANGE_RE = re.compile(
     rf"(?:(?P<cur1>{CURRENCY})\s*)?(?P<low>{_NUMBER})\s*(?:-|–|—|to|until)\s*"
@@ -40,7 +44,8 @@ CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP"}
 
 # Words that make a number look like pay rather than a year or a head-count.
 MONEY_HINTS = ("salary", "pay", "compensation", "package", "rate", "per annum", "p.a.",
-               "gross", "net", "usd", "eur", "gbp", "pln", "k/year", "annually", "monthly")
+               "gross", "net", "usd", "eur", "gbp", "pln", "k/year", "annually", "monthly",
+               "kes", "aed", "zar", "ngn")
 
 
 def _to_int(text: str) -> int:
@@ -130,6 +135,111 @@ def _tagify(*texts: str, limit: int = 8) -> list[str]:
 
 def _clean(value: object) -> str:
     return strip_html(str(value or "")).strip()
+
+
+# --------------------------------------------------------------------------- #
+# paste-any-URL single-post import
+# --------------------------------------------------------------------------- #
+def _domain_label(netloc: str) -> str:
+    """Best-effort company-ish label from a hostname ("careers.greenhouse.io" -> "Greenhouse")."""
+    parts = (netloc or "").lower().split(".")
+    parts = [p for p in parts if p and p not in ("www", "jobs", "careers", "hiring")]
+    if len(parts) >= 2:
+        return parts[-2].title()
+    return (parts[0] if parts else "").title()
+
+
+def _extract_meta(html: str) -> dict[str, str]:
+    """Fetch ``og:*`` / standard meta content for every tag (either attribute order)."""
+    meta: dict[str, str] = {}
+    for tag in re.findall(r"<meta[^>]+>", html, re.IGNORECASE):
+        prop = re.search(r'(?:property|name)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+        content = re.search(r'content=["\']([^"\']*)["\']', tag, re.IGNORECASE)
+        if prop and content:
+            key = prop.group(1).lower()
+            if key and key not in meta:
+                meta[key] = unescape(content.group(1)).strip()
+    return meta
+
+
+def _first_title(html: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    return unescape(match.group(1)).strip() if match else ""
+
+
+def _ld_description(html: str) -> str:
+    """Pulled from the first JSON-LD block that carries a real description."""
+    for block in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)'
+                            r'</script>', html, re.IGNORECASE | re.DOTALL):
+        try:
+            payload = json.loads(block.strip())
+        except ValueError:
+            continue
+        description = (payload.get("description") if isinstance(payload, dict) else "")
+        if isinstance(description, str) and description.strip():
+            return unescape(description).strip()
+    return ""
+
+
+def posting_from_url(url: str, timeout: int = 15) -> JobPosting:
+    """Best-effort single-post import from any public job-posting URL.
+
+    Fetches the page and pulls title / company / description out of HTML meta
+    tags and JSON-LD, falling back to the page ``<title>`` and the site's
+    domain name.  Salary and remote status are parsed from the description the
+    same way as the board sources.  Raises the underlying network/parsing
+    error and leaves it to the caller to turn it into a friendly message.
+    """
+    url = (url or "").strip()
+    if "://" not in url:
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"'{url}' is not a usable http(s) address.")
+
+    response = requests.get(url, timeout=timeout,
+                            headers={"User-Agent": USER_AGENT,
+                                     "Accept": "text/html,application/xhtml+xml,*/*"})
+    response.raise_for_status()
+    html = response.text or ""
+
+    meta = _extract_meta(html)
+    title = (meta.get("og:title") or _first_title(html) or "").strip()
+    description = (meta.get("og:description") or meta.get("description")
+                   or _ld_description(html) or "").strip()
+    company = (meta.get("og:site_name") or _domain_label(parsed.netloc)).strip()
+    location = (meta.get("og:location") or meta.get("location") or "").strip()
+    salary_min, salary_max, currency = parse_salary(description[:600])
+    remote = looks_remote(location, description)
+    literal = _domain_label(parsed.netloc).lower()
+    source = "linkedin" if "linkedin" in literal else "manual"
+    if source == "linkedin":
+        # LinkedIn posts "Title - Company | LinkedIn" into og:title; strip that.
+        title = re.sub(r"\s*-\s*[^|]*?\|\s*(Weekly|Monthly|)$", "", title)
+        title = re.sub(r"\s*\|\s*LinkedIn\s*$", "", title).strip()
+    return JobPosting(
+        source=source, title=title or "Job posting", company=company or parsed.netloc,
+        location=location, remote=remote, salary_min=salary_min, salary_max=salary_max,
+        currency=currency, url=url, description=description,
+        tags=_tagify(title, description, limit=8), posted_at=date.today().isoformat())
+
+
+def linkedin_search_url(query_text: str, location: str = "",
+                        easy_apply_only: bool = True, remote_only: bool = False) -> str:
+    """Build a ready-to-open LinkedIn Jobs search URL.
+
+    LinkedIn has no public job API and does not allow third-party scraping, so
+    the app hands the search to the user's browser instead.  "Easy Apply" is
+    not derivable from any feed either — it is applied as LinkedIn's own search
+    parameter ``f_AL=true``, so only Easy Apply postings are returned.
+    ``f_WT=2`` restricts results to remote roles when requested.
+    """
+    params = {"keywords": (query_text or "").strip(), "location": (location or "").strip()}
+    if easy_apply_only:
+        params["f_AL"] = "true"
+    if remote_only:
+        params["f_WT"] = "2"
+    return "https://www.linkedin.com/jobs/search/?" + urlencode(params)
 
 
 # --------------------------------------------------------------------------- #
@@ -235,7 +345,7 @@ class JobSource:
     homepage = ""
     needs_credentials = False
 
-    def is_configured(self, settings) -> bool:  # noqa: ANN001 - AppSettings, kept loose
+    def is_configured(self, settings) -> bool:
         return True
 
     def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
@@ -360,7 +470,7 @@ class AdzunaSource(JobSource):
     homepage = "https://developer.adzuna.com"
     needs_credentials = True
 
-    def is_configured(self, settings) -> bool:  # noqa: ANN001
+    def is_configured(self, settings) -> bool:
         return bool(settings.adzuna_app_id and settings.adzuna_app_key)
 
     def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
@@ -369,7 +479,7 @@ class AdzunaSource(JobSource):
         settings = AppSettings()
         return self.fetch_with(query, settings, timeout)
 
-    def fetch_with(self, query: SearchQuery, settings, timeout: int = 15) -> list[JobPosting]:  # noqa: ANN001
+    def fetch_with(self, query: SearchQuery, settings, timeout: int = 15) -> list[JobPosting]:
         country = (settings.adzuna_country or "gb").lower()
         params = {
             "app_id": settings.adzuna_app_id, "app_key": settings.adzuna_app_key,
@@ -399,6 +509,112 @@ class AdzunaSource(JobSource):
         return jobs
 
 
+# Country aliases accepted in the location box, mapped to Himalayas' ISO codes.
+_COUNTRY_ALIASES = {
+    "ke": "KE", "kenya": "KE", "nairobi": "KE", "mombasa": "KE",
+    "ae": "AE", "uae": "AE", "emirates": "AE", "dubai": "AE", "abu dhabi": "AE",
+    "za": "ZA", "south africa": "ZA", "johannesburg": "ZA", "cape town": "ZA",
+    "ng": "NG", "nigeria": "NG", "lagos": "NG",
+    "gh": "GH", "ghana": "GH", "eg": "EG", "egypt": "EG", "ma": "MA", "morocco": "MA",
+    "ke,ug,tz": "KE",
+}
+
+
+class HimalayasSource(JobSource):
+    """Remote roles from Himalayas.app - free public API, no key. Covers Kenya,
+    South Africa, UAE and every other country via the ``country`` filter when
+    the location box names a place; otherwise returns worldwide remote roles."""
+
+    name = "himalayas"
+    label = "Himalayas"
+    description = "Remote roles worldwide incl. Kenya/Africa/UAE - free JSON API (no key)."
+    homepage = "https://himalayas.app"
+
+    def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
+        params: dict[str, object] = {}
+        if query.text.strip():
+            params["q"] = query.text.strip()
+        location_lookups = [query.location.lower().strip()]
+        if "," in query.location:
+            location_lookups += [part.strip() for part in query.location.lower().split(",")]
+        country = next((_COUNTRY_ALIASES[part] for part in location_lookups
+                        if part in _COUNTRY_ALIASES), "")
+        if country:
+            params["country"] = country
+        payload = _request_json("https://himalayas.app/jobs/api/search", timeout, params)
+        jobs: list[JobPosting] = []
+        for item in (payload or {}).get("jobs", [])[: query.limit_per_source]:
+            location = "Remote (Worldwide)"
+            location_restrictions = item.get("locationRestrictions") or []
+            if location_restrictions:
+                names = [r.get("name") if isinstance(r, dict) else str(r)
+                         for r in location_restrictions]
+                if any(names):
+                    location = ", ".join(n for n in names if n)
+            remote = True
+            salary_min = int(item.get("minSalary") or 0)
+            salary_max = int(item.get("maxSalary") or 0)
+            period = (item.get("salaryPeriod") or "annual").lower()
+            if period in ("hourly", "weekly", "fortnightly", "monthly"):
+                multiplier = {"hourly": 2080, "weekly": 52, "fortnightly": 26,
+                              "monthly": 12}[period]
+                salary_min *= multiplier
+                salary_max *= multiplier
+            currency = item.get("currency") or ""
+            description = _clean(item.get("description") or item.get("excerpt") or "")
+            jobs.append(JobPosting(
+                source=self.name, title=_clean(item.get("title")),
+                company=_clean(item.get("companyName")),
+                location=location, remote=remote, salary_min=salary_min, salary_max=salary_max,
+                currency=currency, url=item.get("applicationLink") or item.get("guid") or "",
+                description=description,
+                tags=[_clean(t) for t in (item.get("categories") or [])][:8],
+                posted_at=str(item.get("pubDate") or "")))
+        return jobs
+
+
+class ArtificialAeSource(JobSource):
+    """UAE AI / tech roles from artificial.ae - free public JSON API (no key),
+    refreshed hourly. Filters by emirate when the location box names one."""
+
+    name = "uae_ai"
+    label = "UAE AI jobs"
+    description = "UAE AI & tech roles (Dubai, Abu Dhabi…) - free JSON API (no key)."
+    homepage = "https://artificial.ae"
+    needs_credentials = False
+
+    _EMIRATES: ClassVar[dict[str, str]] = {
+        "dubai": "dubai", "dubai, uae": "dubai", "abu dhabi": "abu dhabi",
+        "sharjah": "sharjah", "ajman": "ajman", "fujairah": "fujairah",
+        "ras al khaimah": "ras al khaimah", "umm al quwain": "umm al quwain",
+        "uae": "", "emirates": "", "ae": "",
+    }
+
+    def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
+        params: dict[str, object] = {}
+        location = query.location.strip().lower()
+        emirate = self._EMIRATES.get(location, "")
+        if emirate:
+            params["emirate"] = emirate
+        payload = _request_json("https://artificial.ae/api/v1/jobs", timeout, params)
+        jobs: list[JobPosting] = []
+        for item in (payload or {}).get("data", [])[: query.limit_per_source]:
+            title = _clean(item.get("title"))
+            if query.terms and not query_matches(
+                    f"{title} {item.get('role') or ''} {item.get('company') or ''}".lower(),
+                    query.terms):
+                continue
+            emirate_value = _clean(item.get("emirate"))
+            remote = emirate_value.lower() == "remote"
+            location = "Remote (UAE)" if remote else f"{emirate_value.title()}, UAE"
+            jobs.append(JobPosting(
+                source=self.name, title=title, company=_clean(item.get("company")),
+                location=location, remote=remote, salary_min=0, salary_max=0, currency="",
+                url=item.get("canonical") or item.get("url") or "", description="",
+                tags=_tagify(title, limit=8), posted_at=str(item.get("posted_ts") or "")))
+        return jobs
+
+
 class SampleSource(JobSource):
     """Offline demo data - keeps the whole pipeline usable without a network."""
 
@@ -416,9 +632,7 @@ class SampleSource(JobSource):
         for template in SAMPLE_TEMPLATES:
             title = template["title"]
             haystack = f"{title} {' '.join(template['tags'])} {template['description']}".lower()
-            if not terms:
-                strict.append(template)
-            elif query_matches(haystack, terms):
+            if not terms or query_matches(haystack, terms):
                 strict.append(template)
             elif query_matches(haystack, terms, require_all=False):
                 loose.append(template)
@@ -541,8 +755,150 @@ SAMPLE_TEMPLATES: list[dict] = [
 ]
 
 
+class TaskSource(JobSource):
+    """Offline demo feed of microtask-style remote gigs (pay per task in USD).
+
+    Live microtask portals (Remotasks, Clickworker, Outlier, Appen…) only show
+    tasks after signing in and have no public API, so the Tasks search works on
+    this bundled feed plus postings the user tracks by pasting a link.
+    """
+
+    name = "tasks"
+    label = "Task feed (demo)"
+    description = "Locally generated microtask gigs with per-task USD pay."
+    homepage = ""
+
+    def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
+        if query.limit_per_source <= 0:
+            return []
+        terms = query.terms
+        random.seed(11)
+        jobs: list[JobPosting] = []
+        strict: list[dict] = []
+        loose: list[dict] = []
+        for template in TASK_TEMPLATES:
+            title = template["title"]
+            haystack = f"{title} {' '.join(template['tags'])} {template['description']}".lower()
+            if not terms or query_matches(haystack, terms):
+                strict.append(template)
+            elif query_matches(haystack, terms, require_all=False):
+                loose.append(template)
+        for template in (strict or loose):
+            posted = date.today() - timedelta(days=random.randint(0, 9))
+            jobs.append(JobPosting(
+                source=self.name, title=template["title"],
+                company="Remote microtask platform",
+                location="Remote", remote=True,
+                salary_min=template["pay_min"], salary_max=template["pay_max"],
+                currency="USD", url=f"https://example.com/tasks/{template['slug']}",
+                description=template["description"], tags=list(template["tags"]),
+                posted_at=posted.isoformat()))
+            if len(jobs) >= query.limit_per_source:
+                break
+        return jobs
+
+
+TASK_TEMPLATES: list[dict] = [
+    {
+        "slug": "audio-transcription", "title": "Audio transcription - English audio",
+        "pay_min": 12, "pay_max": 25,
+        "tags": ["transcription", "typing", "english", "audio", "writing"],
+        "description": (
+            "Transcribe short English audio clips (2-10 minutes) with accurate spelling and "
+            "punctuation. Each task quotes a per-audio rate paid in USD. Requirements: fluent "
+            "English, a quiet workspace while listening, and attention to speaker overlap."),
+    },
+    {
+        "slug": "image-data-labeling", "title": "Image data labeling - object tagging",
+        "pay_min": 8, "pay_max": 18,
+        "tags": ["data-labeling", "computer-vision", "tagging", "online", "remote"],
+        "description": (
+            "Label objects in photos: draw boxes around vehicles, people and signs to train "
+            "computer-vision models. Per-image pay, batches of 20-50 images, quality checked "
+            "by the client. Good for detail-oriented workers with steady hands."),
+    },
+    {
+        "slug": "text-annotation", "title": "Text annotation - sentiment & intent",
+        "pay_min": 10, "pay_max": 22,
+        "tags": ["annotation", "nlp", "writing", "english", "data"],
+        "description": (
+            "Read short customer messages and tag sentiment and intent to train language "
+            "models. Each text pays between $10 and $22 for a batch of 10. Requires excellent "
+            "written English and consistent judgement across similar examples."),
+    },
+    {
+        "slug": "content-moderation", "title": "Content moderation - chat & forum review",
+        "pay_min": 12, "pay_max": 20,
+        "tags": ["content-moderation", "review", "community", "english", "typing"],
+        "description": (
+            "Review flagged chat messages and forum posts against a moderation policy and "
+            "decide keep/remove with a short note. Paid per reviewed submission. "
+            "Requires careful reading and tolerance for repetitive content."),
+    },
+    {
+        "slug": "web-goodness-testing", "title": "Website QA testing - functional checks",
+        "pay_min": 15, "pay_max": 45,
+        "tags": ["qa", "testing", "web", "reports", "remote"],
+        "description": (
+            "Work through test scenarios on live websites (checkout, sign-up, search) and "
+            "report bugs with screenshots. Per-test-suite pay between $15 and $45. A "
+            "second screen helps when comparing expected vs actual behaviour."),
+    },
+    {
+        "slug": "search-result-comparison", "title": "Search quality - result relevance",
+        "pay_min": 6, "pay_max": 15,
+        "tags": ["search", "evaluation", "research", "english", "online"],
+        "description": (
+            "Compare two sets of search results for the same query and judge which is more "
+            "relevant. Per-batch pay of $6-$15. Requires good web research skills and "
+            "consistent application of the rating rubric."),
+    },
+    {
+        "slug": "photo-tagging-catalog", "title": "Product photo tagging - e-commerce",
+        "pay_min": 7, "pay_max": 14,
+        "tags": ["tagging", "ecommerce", "catalog", "typing", "online"],
+        "description": (
+            "Tag product photos with category, colour, material and angle. Per-image pay, "
+            "large batches available. Simple, repetitive work for fast typists; quality "
+            "review catches inconsistent tags."),
+    },
+    {
+        "slug": "translation-review", "title": "Translation review - EN/ES/FR",
+        "pay_min": 14, "pay_max": 30,
+        "tags": ["translation", "review", "writing", "english", "spanish", "french"],
+        "description": (
+            "Review machine translations of short UI strings and fix mistranslations. Paid "
+            "per string batch in USD. Native or near-native speakers of English with working "
+            "Spanish or French preferred."),
+    },
+    {
+        "slug": "audio-verification", "title": "Audio verification - transcription QC",
+        "pay_min": 9, "pay_max": 19,
+        "tags": ["audio", "verification", "qc", "english", "typing"],
+        "description": (
+            "Listen to a transcription and correct errors against the recording. Per-clip "
+            "pay of $9-$19. Comparable to transcription work but with an emphasis on "
+            "spotting automated mistakes quickly."),
+    },
+    {
+        "slug": "survey-taxonomy", "title": "Survey classification - response coding",
+        "pay_min": 8, "pay_max": 16,
+        "tags": ["surveys", "classification", "data", "english", "typing"],
+        "description": (
+            "Classify free-text survey answers into pre-defined categories using a rubric. "
+            "Paid per batch of 25 responses. Methodical workers who can apply a category "
+            "tree consistently do best."),
+    },
+]
+
+
+def default_task_sources() -> list[JobSource]:
+    return [TaskSource()]
+
+
 def default_sources() -> list[JobSource]:
-    return [RemotiveSource(), ArbeitnowSource(), RemoteOkSource(), AdzunaSource(), SampleSource()]
+    return [RemotiveSource(), ArbeitnowSource(), RemoteOkSource(), HimalayasSource(),
+            ArtificialAeSource(), AdzunaSource(), SampleSource()]
 
 
 # --------------------------------------------------------------------------- #
@@ -551,12 +907,12 @@ def default_sources() -> list[JobSource]:
 class JobScraper:
     """Runs the enabled sources concurrently and de-duplicates their results."""
 
-    def __init__(self, settings=None, sources: list[JobSource] | None = None) -> None:  # noqa: ANN001
+    def __init__(self, settings=None, sources: list[JobSource] | None = None) -> None:
         self.settings = settings
         self.sources = {s.name: s for s in (sources if sources is not None else default_sources())}
 
     # -- public API -------------------------------------------------------- #
-    def search(self, query: SearchQuery, progress=None, should_cancel=None) -> SearchOutcome:  # noqa: ANN001
+    def search(self, query: SearchQuery, progress=None, should_cancel=None) -> SearchOutcome:
         started = time.perf_counter()
         selected = self._select_sources(query)
         results: list[FetchResult] = []
@@ -712,7 +1068,18 @@ class JobScraper:
 
 
 __all__ = [
-    "AdzunaSource", "ArbeitnowSource", "FetchResult", "JobScraper", "JobSource",
-    "RemotiveSource", "RemoteOkSource", "SampleSource", "SearchOutcome", "SearchQuery",
-    "default_sources", "looks_remote", "parse_salary",
+    "AdzunaSource",
+    "ArbeitnowSource",
+    "FetchResult",
+    "JobScraper",
+    "JobSource",
+    "RemoteOkSource",
+    "RemotiveSource",
+    "SampleSource",
+    "SearchOutcome",
+    "SearchQuery",
+    "default_sources",
+    "looks_remote",
+    "parse_salary",
+    "posting_from_url",
 ]

@@ -10,17 +10,32 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit,
-                               QPlainTextEdit, QSplitter, QTreeWidget, QTreeWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..services.application_pipeline import TrackedApplication
-from ..services.interview_prep import CATEGORIES, CATEGORY_LABELS, InterviewPrep, PrepQuestion
+from ..services.interview_prep import (
+    CATEGORIES,
+    CATEGORY_LABELS,
+    InterviewPrep,
+    PrepQuestion,
+)
 from . import theme as th
 
 
 class InterviewPrepDialog(QDialog):
-    def __init__(self, ctx, row: TrackedApplication, parent: QWidget | None = None) -> None:  # noqa: ANN001
+    def __init__(self, ctx, row: TrackedApplication, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.ctx = ctx
         self.row = row
@@ -217,10 +232,10 @@ class InterviewPrepDialog(QDialog):
         self._sync_notes()
         self.ctx.pipeline.save_interview_prep(self.application_id, self.prep)
 
-        def work():  # noqa: ANN202
+        def work():
             return self.ctx.pipeline.generate_interview_prep(self.application_id, self.ctx.profile)
 
-        def done(result) -> None:  # noqa: ANN001
+        def done(result) -> None:
             prep, added = result
             self.prep = prep
             self._dirty = False
@@ -276,7 +291,7 @@ class InterviewPrepDialog(QDialog):
     def _export(self) -> None:
         self.save(quiet=True)
 
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.status_line.setText(f"Exported {path}")
             self.ctx.notify(f"Prep sheet exported to {path.name}", "success")
             th.open_path(path)
@@ -294,7 +309,7 @@ class InterviewPrepDialog(QDialog):
         self.ctx.open_preview(f"Interview prep · {self.row.title}", markdown, None)
 
     # ----------------------------------------------------------- lifecycle #
-    def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+    def closeEvent(self, event) -> None:
         if self._dirty and not getattr(self.ctx, "_closing", False):
             self.save(quiet=True)
         super().closeEvent(event)

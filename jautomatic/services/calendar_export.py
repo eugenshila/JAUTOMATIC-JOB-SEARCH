@@ -167,7 +167,7 @@ def build_calendar(events: list[CalendarEvent], calname: str = CALENDAR_NAME,
 # --------------------------------------------------------------------------- #
 # tracker -> events
 # --------------------------------------------------------------------------- #
-def _follow_up_event(row: "TrackedApplication") -> CalendarEvent | None:
+def _follow_up_event(row: TrackedApplication) -> CalendarEvent | None:
     app = row.application
     due = parse_date(app.follow_up_at)
     if due is None or not app.status_enum.is_active:
@@ -184,7 +184,7 @@ def _follow_up_event(row: "TrackedApplication") -> CalendarEvent | None:
         url=row.job.url)
 
 
-def _interview_event(row: "TrackedApplication") -> CalendarEvent | None:
+def _interview_event(row: TrackedApplication) -> CalendarEvent | None:
     app = row.application
     when = parse_when(app.interview_at)
     if when is None:
@@ -207,7 +207,7 @@ def _interview_event(row: "TrackedApplication") -> CalendarEvent | None:
         url=row.job.url)
 
 
-def events_for(rows: list["TrackedApplication"], include_follow_ups: bool = True,
+def events_for(rows: list[TrackedApplication], include_follow_ups: bool = True,
                include_interviews: bool = True) -> list[CalendarEvent]:
     """Derive calendar events from tracker rows (follow-ups + interviews)."""
     events: list[CalendarEvent] = []
@@ -223,5 +223,16 @@ def events_for(rows: list["TrackedApplication"], include_follow_ups: bool = True
     return events
 
 
-__all__ = ["CALENDAR_NAME", "CalendarEvent", "INTERVIEW_DEFAULT_MINUTES", "PRODID", "UID_DOMAIN",
-           "build_calendar", "escape_text", "events_for", "fold_line", "parse_when", "unfold"]
+__all__ = [
+    "CALENDAR_NAME",
+    "INTERVIEW_DEFAULT_MINUTES",
+    "PRODID",
+    "UID_DOMAIN",
+    "CalendarEvent",
+    "build_calendar",
+    "escape_text",
+    "events_for",
+    "fold_line",
+    "parse_when",
+    "unfold",
+]

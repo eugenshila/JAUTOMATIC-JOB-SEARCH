@@ -9,10 +9,13 @@ import requests
 from jautomatic.models import AppSettings, JobPosting
 from jautomatic.services import job_scraper
 from jautomatic.services.job_scraper import (AdzunaSource, ArbeitnowSource, JobScraper,
-                                             RemoteOkSource, RemotiveSource, SampleSource,
-                                             SearchQuery, looks_remote, parse_salary)
+                                             RemoteOkSource, RemotiveSource,
+                                             HimalayasSource, ArtificialAeSource,
+                                             SampleSource,
+                                             TaskSource, SearchQuery, default_task_sources,
+                                             looks_remote, parse_salary, posting_from_url)
 
-from .fixtures import ADZUNA, ARBEITNOW, REMOTEOK, REMOTIVE
+from .fixtures import ADZUNA, ARBEITNOW, HIMALAYAS, UAEAI, REMOTEOK, REMOTIVE
 
 
 class SalaryParsingTests(unittest.TestCase):
@@ -132,6 +135,80 @@ class AdzunaTests(unittest.TestCase):
         self.assertEqual(job.location, "Amsterdam, Netherlands")
         self.assertEqual((job.salary_min, job.salary_max), (65000, 82000))
         self.assertIn("/gb/", request.call_args[0][0])
+
+
+class HimalayasTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(job_scraper, "_request_json", return_value=HIMALAYAS)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
+    def test_parses_jobs(self):
+        jobs = HimalayasSource().fetch(SearchQuery(text="engineer", limit_per_source=10))
+        self.assertEqual(len(jobs), 2)
+        job = jobs[0]
+        self.assertEqual(job.title, "Machine Learning Engineer")
+        self.assertEqual(job.company, "Paystack Kenya")
+        self.assertTrue(job.remote)
+        self.assertEqual(job.currency, "USD")
+        self.assertIn("Kenya", job.location)
+
+    def test_monthly_salary_annualised(self):
+        jobs = HimalayasSource().fetch(SearchQuery(limit_per_source=10))
+        uae_job = next(j for j in jobs if "Dataloop" in (j.company or ""))
+        self.assertEqual(uae_job.salary_min, 12000 * 12)
+        self.assertEqual(uae_job.salary_max, 15000 * 12)
+        self.assertEqual(uae_job.currency, "AED")
+
+    def test_kenya_country_filter(self):
+        with mock.patch.object(job_scraper, "_request_json", return_value=HIMALAYAS) as req:
+            HimalayasSource().fetch(SearchQuery(text="engineer", location="Kenya",
+                                                limit_per_source=10))
+        params = req.call_args[1].get("params") or req.call_args[0][2]
+        self.assertEqual(params.get("country"), "KE")
+
+    def test_unrestricted_when_no_location(self):
+        with mock.patch.object(job_scraper, "_request_json", return_value=HIMALAYAS) as req:
+            HimalayasSource().fetch(SearchQuery(text="engineer", limit_per_source=10))
+        params = req.call_args[1].get("params") or req.call_args[0][2]
+        self.assertNotIn("country", params)
+
+
+class ArtificialAeTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(job_scraper, "_request_json", return_value=UAEAI)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
+    def test_parses_jobs(self):
+        jobs = ArtificialAeSource().fetch(SearchQuery(limit_per_source=10))
+        self.assertEqual(len(jobs), 2)
+        job = jobs[0]
+        self.assertEqual(job.title, "Senior AI Engineer")
+        self.assertEqual(job.company, "Emirates")
+        self.assertTrue(job.remote is False)
+        self.assertIn("Dubai", job.location)
+        self.assertEqual(job.currency, "")
+        self.assertIn("artificial.ae", job.url)
+
+    def test_remote_emirate(self):
+        payload = dict(UAEAI)
+        payload["data"] = [{**UAEAI["data"][0], "emirate": "remote"}]
+        with mock.patch.object(job_scraper, "_request_json", return_value=payload):
+            jobs = ArtificialAeSource().fetch(SearchQuery(limit_per_source=10))
+        self.assertTrue(jobs[0].remote)
+        self.assertEqual(jobs[0].location, "Remote (UAE)")
+
+    def test_emirate_filter(self):
+        with mock.patch.object(job_scraper, "_request_json", return_value=UAEAI) as req:
+            ArtificialAeSource().fetch(SearchQuery(location="Abu Dhabi",
+                                                   limit_per_source=10))
+        params = req.call_args[1].get("params") or req.call_args[0][2]
+        self.assertEqual(params.get("emirate"), "abu dhabi")
+
+    def test_uae_no_key_required(self):
+        self.assertFalse(ArtificialAeSource().needs_credentials)
+        self.assertTrue(ArtificialAeSource().is_configured(AppSettings()))
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -268,6 +345,113 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(len(outcome.results), 2)
         self.assertLess(outcome.elapsed, 5)
+
+
+class PostingFromUrlTests(unittest.TestCase):
+    PAGE = """
+    <html><head>
+      <title>Senior Python Engineer - Northwind Analytics | Greenhouse</title>
+      <meta property="og:title" content="Senior Python Engineer">
+      <meta property="og:site_name" content="Northwind Analytics">
+      <meta property="og:description"
+            content="Own the data platform. Pay: $90,000 - $120,000. Remote (EU) welcome.">
+    </head><body></body></html>
+    """
+
+    def _fetch(self, text: str, url: str = "https://boards.greenhouse.io/northwind/jobs/123"):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.text = text
+        with mock.patch.object(job_scraper.requests, "get", return_value=response) as get:
+            job = posting_from_url(url)
+            return job, get
+
+    def test_extracts_fields_and_parses_salary(self):
+        job, get = self._fetch(self.PAGE)
+        self.assertEqual(job.title, "Senior Python Engineer")
+        self.assertEqual(job.company, "Northwind Analytics")
+        self.assertEqual(job.source, "manual")
+        self.assertEqual(job.url, "https://boards.greenhouse.io/northwind/jobs/123")
+        self.assertEqual((job.salary_min, job.salary_max), (90000, 120000))
+        self.assertTrue(job.remote)
+        self.assertTrue(job.tags)
+        self.assertIn("/boards.greenhouse.io/", get.call_args[0][0])
+
+    def test_falls_back_to_title_and_domain(self):
+        job, _ = self._fetch("<html><head><title>Backend Engineer (Go)</title></head></html>",
+                             "https://kestrel.io/jobs/1")
+        self.assertEqual(job.title, "Backend Engineer (Go)")
+        self.assertEqual(job.company, "Kestrel")          # kestrel.io -> "Kestrel"
+        self.assertEqual(job.url, "https://kestrel.io/jobs/1")
+
+    def test_json_ld_description_is_used_when_meta_is_missing(self):
+        html = ('<html><head>'
+                '<script type="application/ld+json">'
+                '{"@type":"JobPosting","title":"Data Engineer",'
+                '"description":"Write SQL against Snowflake. Salary \u20ac60k - \u20ac75k."}'
+                '</script></head></html>')
+        job, _ = self._fetch(html)
+        self.assertIn("Snowflake", job.description)
+        self.assertEqual((job.salary_min, job.salary_max), (60000, 75000))
+
+    def test_scheme_is_added_when_missing(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.text = self.PAGE
+        with mock.patch.object(job_scraper.requests, "get", return_value=response) as get:
+            job = posting_from_url("boards.lever.co/northwind/jobs/9")
+        self.assertTrue(job.url.startswith("https://"))
+
+    def test_invalid_url_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            posting_from_url("ftp://example.com/jobs/1")
+
+    def test_empty_url_raises(self):
+        with self.assertRaises(ValueError):
+            posting_from_url("   ")
+
+    def test_network_errors_propagate_as_request_exceptions(self):
+        with mock.patch.object(job_scraper.requests, "get",
+                               side_effect=requests.exceptions.Timeout("too slow")):
+            with self.assertRaises(requests.exceptions.RequestException):
+                posting_from_url("https://example.com/jobs/1")
+
+
+class ScraperPublicApiTests(unittest.TestCase):
+    def test_posting_from_url_is_exported(self):
+        self.assertIn("posting_from_url", job_scraper.__all__)
+
+
+class TaskSourceTests(unittest.TestCase):
+    def test_fetch_returns_usd_priced_remote_tasks(self):
+        jobs = TaskSource().fetch(SearchQuery(text="audio", limit_per_source=25))
+        self.assertEqual(jobs[0].title, "Audio transcription - English audio")
+        self.assertTrue(all(job.currency.upper() == "USD" for job in jobs))
+        self.assertTrue(all(job.remote for job in jobs))
+        self.assertTrue(all((job.salary_min or 0) > 0 for job in jobs))
+        self.assertEqual(jobs[0].source, "tasks")
+
+    def test_fetch_respects_limit(self):
+        jobs = TaskSource().fetch(SearchQuery(text="", limit_per_source=4))
+        self.assertEqual(len(jobs), 4)
+
+    def test_query_terms_filter_the_feed(self):
+        matching = TaskSource().fetch(SearchQuery(text="translation", limit_per_source=25))
+        self.assertTrue(any("translation" in (job.title + job.description).lower()
+                            for job in matching))
+        empty = TaskSource().fetch(SearchQuery(text="", limit_per_source=0))
+        self.assertEqual(empty, [])
+
+    def test_scraper_search_via_tasks_source(self):
+        settings = AppSettings()
+        settings.enabled_sources = []          # search must use the explicit source list
+        scraper = JobScraper(settings, sources=default_task_sources())
+        outcome = scraper.search(SearchQuery(text="labeling", limit_per_source=10,
+                                             sources=["tasks"]))
+        self.assertFalse(outcome.errors)
+        self.assertTrue(outcome.jobs)
+        self.assertEqual(outcome.jobs[0].source, "tasks")
+        self.assertTrue(all(job.currency.upper() == "USD" for job in outcome.jobs))
 
 
 if __name__ == "__main__":  # pragma: no cover

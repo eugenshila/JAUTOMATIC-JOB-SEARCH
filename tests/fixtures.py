@@ -102,3 +102,81 @@ ADZUNA = {
 }
 
 REMOTIVE_PAYLOADS = {"remotive": REMOTIVE, "arbeitnow": ARBEITNOW, "remoteok": REMOTEOK}
+
+HIMALAYAS = {
+    "totalCount": 2,
+    "jobs": [
+        {
+            "title": "Machine Learning Engineer",
+            "excerpt": "Build and deploy ML models for global payments.",
+            "companyName": "Paystack Kenya",
+            "companySlug": "paystack-kenya",
+            "companyLogo": "",
+            "employmentType": "Full Time",
+            "minSalary": 45000,
+            "maxSalary": 65000,
+            "salaryPeriod": "annual",
+            "seniority": ["Senior"],
+            "currency": "USD",
+            "locationRestrictions": ["Kenya"],
+            "timezoneRestrictions": [3],
+            "categories": ["Machine-Learning", "Python", "Payments"],
+            "parentCategories": ["Engineering"],
+            "description": "<p>Build and deploy <strong>ML models</strong> for global payments.</p>",
+            "pubDate": 1789430400,
+            "expiryDate": 1794739200,
+            "applicationLink": "https://himalayas.app/companies/paystack-kenya/jobs/ml-engineer",
+            "guid": "https://himalayas.app/companies/paystack-kenya/jobs/ml-engineer",
+        },
+        {
+            "title": "Backend Engineer (Remote, UAE)",
+            "excerpt": "Join our Dubai team remotely.",
+            "companyName": "Dataloop",
+            "companySlug": "dataloop",
+            "companyLogo": "",
+            "employmentType": "Full Time",
+            "minSalary": 12000,
+            "maxSalary": 15000,
+            "salaryPeriod": "monthly",
+            "seniority": ["Mid-level"],
+            "currency": "AED",
+            "locationRestrictions": [],
+            "timezoneRestrictions": [4],
+            "categories": ["Backend", "Go", "Kubernetes"],
+            "parentCategories": ["Engineering"],
+            "description": "<p>Join our Dubai team remotely.</p>",
+            "pubDate": 1789344000,
+            "expiryDate": 1794652800,
+            "applicationLink": "https://himalayas.app/companies/dataloop/jobs/backend-engineer",
+            "guid": "https://himalayas.app/companies/dataloop/jobs/backend-engineer",
+        },
+    ],
+}
+
+UAEAI = {
+    "data": [
+        {
+            "slug": "emirates-senior-ai-engineer-dubai",
+            "title": "Senior AI Engineer",
+            "company": "Emirates",
+            "emirate": "dubai",
+            "role": "ml",
+            "url": "https://ae.linkedin.com/jobs/view/senior-ai-engineer-emirates",
+            "source": "linkedin",
+            "posted_ts": 1789344000,
+            "canonical": "https://artificial.ae/jobs/emirates-senior-ai-engineer-dubai/",
+        },
+        {
+            "slug": "miral-data-scientist-abu-dhabi",
+            "title": "Data Scientist – AI",
+            "company": "Miral Destinations",
+            "emirate": "abu dhabi",
+            "role": "data",
+            "url": "https://ae.linkedin.com/jobs/view/data-scientist-ai-miral",
+            "source": "linkedin",
+            "posted_ts": 1789257600,
+            "canonical": "https://artificial.ae/jobs/miral-data-scientist-abu-dhabi/",
+        },
+    ],
+    "meta": {"count": 2, "total": 772, "limit": 50, "offset": 0, "has_more": True},
+}

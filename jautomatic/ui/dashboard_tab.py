@@ -4,15 +4,25 @@ from __future__ import annotations
 from datetime import date
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QGridLayout, QHBoxLayout, QHeaderView, QLabel, QProgressBar,
-                               QScrollArea, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QProgressBar,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
+from ..models import ApplicationStatus
 from ..services.application_pipeline import TrackedApplication
 from . import theme as th
 
 
-def next_steps(profile) -> list[str]:  # noqa: ANN001
+def next_steps(profile) -> list[str]:
     """Concrete, ordered suggestions that raise profile completeness."""
     steps: list[str] = []
     if not profile.full_name:
@@ -42,7 +52,7 @@ class DashboardTab(QWidget):
     page_title = "Dashboard"
     page_subtitle = "Where your search stands right now"
 
-    def __init__(self, ctx) -> None:  # noqa: ANN001 - MainWindow
+    def __init__(self, ctx) -> None:
         super().__init__()
         self.ctx = ctx
         self.stat_cards: dict[str, th.StatCard] = {}
@@ -67,12 +77,13 @@ class DashboardTab(QWidget):
         tiles = QGridLayout()
         tiles.setSpacing(12)
         specs = [
-            ("jobs", "Postings found", th.current_theme()["info"]),
-            ("applications", "Tracked", th.current_theme()["accent"]),
-            ("materials_ready", "Materials ready", "#a06bff"),
-            ("sent", "Applications sent", th.current_theme()["success"]),
-            ("interviews", "Interviews", th.current_theme()["warning"]),
-            ("follow_ups_due", "Follow-ups due", th.current_theme()["danger"]),
+            ("jobs", "Postings found", "info"),
+            ("applications", "Tracked", "accent"),
+            ("materials_ready", "Materials ready",
+             ApplicationStatus.MATERIALS_READY.color),
+            ("sent", "Applications sent", "success"),
+            ("interviews", "Interviews", "warning"),
+            ("follow_ups_due", "Follow-ups due", "danger"),
         ]
         for column, (key, caption, color) in enumerate(specs):
             card = th.StatCard(caption, "0", "", color)
@@ -238,7 +249,8 @@ class DashboardTab(QWidget):
             head = th.label(f"{row.title} · {row.company}", "title", wrap=True)
             when = row.application.follow_up_at or date.today().isoformat()
             days = row.application.days_since_sent
-            meta = f"Follow-up {when}" + (f" · sent {days} days ago" if days is not None else "")
+            rung = row.application.rung_label(self.ctx.settings.follow_up_max_nudges)
+            meta = f"{rung} follow-up {when}" + (f" · sent {days} days ago" if days is not None else "")
             box.addWidget(head)
             box.addWidget(th.label(meta, "small"))
             buttons = QHBoxLayout()
@@ -292,10 +304,10 @@ class DashboardTab(QWidget):
         self._prepare(row)
 
     def _prepare(self, row: TrackedApplication) -> None:
-        def work():  # noqa: ANN202
+        def work():
             return self.ctx.pipeline.prepare(row.application, self.ctx.profile)
 
-        def done(materials) -> None:  # noqa: ANN001
+        def done(materials) -> None:
             self.ctx.notify(f"Materials ready for {row.title} at {row.company}.", "success")
             self.ctx.refresh_all()
             if materials.cv and materials.cv.text:
@@ -312,7 +324,7 @@ class DashboardTab(QWidget):
             self.ctx.notify("This posting has no URL attached.", "warning")
 
     def _draft_follow_up(self, row: TrackedApplication) -> None:
-        def done(result) -> None:  # noqa: ANN001
+        def done(result) -> None:
             path, text = result
             self.ctx.notify("Follow-up e-mail drafted.", "success")
             self.ctx.open_preview("Follow-up e-mail", text, path)
@@ -331,14 +343,14 @@ class DashboardTab(QWidget):
         tab.start_search(import_results=True)
 
     def _import_demo(self) -> None:
-        def work():  # noqa: ANN202
+        def work():
             outcome = self.ctx.pipeline.search(
                 self.ctx.settings.last_search_query or "python", include_sample=True,
                 sources=["sample"])
             created = self.ctx.pipeline.import_jobs(outcome.jobs)
             return outcome, created
 
-        def done(result) -> None:  # noqa: ANN001
+        def done(result) -> None:
             outcome, created = result
             self.ctx.notify(f"Imported {len(created)} demo posting(s); "
                             f"{len(outcome.jobs)} matched your filters.", "success")
@@ -347,7 +359,7 @@ class DashboardTab(QWidget):
         self.ctx.run_task("Importing demo postings", work, done)
 
     def _run_autopilot(self) -> None:
-        def done(materials) -> None:  # noqa: ANN001
+        def done(materials) -> None:
             if not materials:
                 self.ctx.notify("Autopilot found nothing above the score threshold "
                                 "(or everything is already prepared).", "info")
@@ -361,7 +373,7 @@ class DashboardTab(QWidget):
                               should_cancel=self.ctx.cancel_event.is_set), done)
 
     def _export_csv(self) -> None:
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.ctx.notify(f"Tracker exported to {path}", "success")
             th.open_path(path)
 
@@ -369,7 +381,7 @@ class DashboardTab(QWidget):
                           lambda: self.ctx.pipeline.export_tracker_csv(self.ctx.profile), done)
 
     def _export_calendar(self) -> None:
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.ctx.notify(f"Calendar exported to {path}", "success")
             th.open_path(path)
 

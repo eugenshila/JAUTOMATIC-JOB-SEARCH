@@ -10,11 +10,21 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout,
-                               QPushButton, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QPushButton,
+    QSizePolicy,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
 
 PALETTES: dict[str, dict[str, str]] = {
     "midnight": {
@@ -28,6 +38,13 @@ PALETTES: dict[str, dict[str, str]] = {
         "border": "#d5dcec", "text": "#172033", "muted": "#5d6a86", "accent": "#2f6bff",
         "accent_text": "#ffffff", "success": "#1a9e6a", "warning": "#c67a09",
         "danger": "#cf3b52", "info": "#1f7fd0", "shadow": "rgba(23,32,51,60)",
+    },
+    "blackgreen": {
+        "bg": "#050b07", "surface": "#0c1711", "surface_alt": "#132219",
+        "surface_hi": "#1a3324", "border": "#2c5a3e", "text": "#e9f7ef",
+        "muted": "#9fb8ab", "accent": "#34e573", "accent_text": "#03150a",
+        "success": "#3ddc85", "warning": "#f0a93b", "danger": "#ef5f70",
+        "info": "#38c7b8", "shadow": "rgba(0,0,0,200)",
     },
 }
 DEFAULT_THEME = "midnight"
@@ -74,8 +91,8 @@ QPushButton:disabled { color: %(muted)s; background: %(surface)s; }
 QPushButton#Primary { background: %(accent)s; border: 1px solid %(accent)s; color: %(accent_text)s; }
 QPushButton#Primary:hover { background: %(accent)s; }
 QPushButton#Danger { color: %(danger)s; border-color: %(danger)s; }
-QPushButton#Ghost { background: transparent; border: 1px solid transparent; color: %(accent)s; }
-QPushButton#Ghost:hover { background: %(surface_alt)s; }
+QPushButton#Ghost { background: transparent; border: 1px solid %(border)s; border-radius: 8px; color: %(accent)s; }
+QPushButton#Ghost:hover { background: %(surface_alt)s; border-color: %(accent)s; }
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox, QDateEdit {
     background: %(surface_alt)s; border: 1px solid %(border)s; border-radius: 8px;
@@ -120,10 +137,10 @@ QTabBar::tab { background: transparent; padding: 7px 14px; color: %(muted)s; fon
 QTabBar::tab:selected { color: %(text)s; border-bottom: 2px solid %(accent)s; }
 
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
-QScrollBar::handle:vertical { background: %(surface_hi)s; border-radius: 5px; min-height: 30px; }
+QScrollBar::handle:vertical { background: %(border)s; border-radius: 5px; min-height: 30px; }
 QScrollBar::handle:vertical:hover { background: %(accent)s; }
 QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
-QScrollBar::handle:horizontal { background: %(surface_hi)s; border-radius: 5px; min-width: 30px; }
+QScrollBar::handle:horizontal { background: %(border)s; border-radius: 5px; min-width: 30px; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 
 QProgressBar { background: %(surface_alt)s; border: 1px solid %(border)s; border-radius: 7px;
@@ -144,8 +161,8 @@ QSplitter::handle:hover { background: %(accent)s; }
 """
 
 GLYPHS = {
-    "dashboard": "▤", "profile": "☰", "search": "⌕", "applications": "✉",
-    "settings": "⚙", "check": "✔", "cross": "✖", "info": "ℹ", "warn": "⚠",
+    "dashboard": "▤", "profile": "☰", "search": "⌕", "tasks": "◈", "applications": "✉",
+    "insights": "∑", "settings": "⚙", "check": "✔", "cross": "✖", "info": "ℹ", "warn": "⚠",
     "refresh": "↻", "add": "＋", "open": "↗", "save": "✔", "send": "➤",
     "doc": "▣", "spark": "✦", "clock": "◔", "star": "★", "trash": "🗑",
 }
@@ -245,7 +262,7 @@ def hline(parent: QWidget | None = None) -> QFrame:
 
 
 def button(text: str, role: str = "default", tooltip: str = "",
-           on_click=None) -> QPushButton:  # noqa: ANN001
+           on_click=None) -> QPushButton:
     widget = QPushButton(text)
     widget.setObjectName({"primary": "Primary", "danger": "Danger", "ghost": "Ghost"}.get(role, ""))
     widget.setCursor(Qt.PointingHandCursor)
@@ -326,7 +343,12 @@ class Card(QFrame):
 
 
 class StatCard(Card):
-    """Big-number tile used on the dashboard."""
+    """Big-number tile used on the dashboard.
+
+    ``color`` may be a palette token (``"info"``, ``"accent"``, …) or a literal
+    hex string; tokens are re-resolved against the current palette on every
+    ``set_value`` so switching themes recolours the tiles.
+    """
 
     def __init__(self, caption: str, value: str = "0", hint: str = "",
                  color: str | None = None, parent: QWidget | None = None) -> None:
@@ -334,8 +356,8 @@ class StatCard(Card):
         self.root_layout = self._root
         self.value_label = QLabel(value)
         self.value_label.setObjectName("StatValue")
-        if color:
-            self.value_label.setStyleSheet(f"color: {color};")
+        self._color = color
+        self._apply_color()
         self.caption_label = QLabel(caption.upper())
         self.caption_label.setObjectName("StatLabel")
         self.hint_label = QLabel(hint)
@@ -346,23 +368,33 @@ class StatCard(Card):
         self.body.addWidget(self.hint_label)
         self.setMinimumWidth(150)
 
+    def _apply_color(self) -> None:
+        color = self._color
+        if color in PALETTES[current_theme().name]:
+            color = current_theme()[color]
+        if color:
+            self.value_label.setStyleSheet(f"color: {color};")
+        else:
+            self.value_label.setStyleSheet("")
+
     def set_value(self, value: str, hint: str = "") -> None:
         self.value_label.setText(str(value))
         if hint:
             self.hint_label.setText(hint)
+        self._apply_color()
 
 
 class StatusChip(QLabel):
     """Coloured pill for an application status."""
 
-    def __init__(self, status=None, parent: QWidget | None = None) -> None:  # noqa: ANN001
+    def __init__(self, status=None, parent: QWidget | None = None) -> None:
         super().__init__("", parent)
         self.setObjectName("Chip")
         self.setAlignment(Qt.AlignCenter)
         if status is not None:
             self.set_status(status)
 
-    def set_status(self, status) -> None:  # noqa: ANN001 - ApplicationStatus
+    def set_status(self, status) -> None:
         color = getattr(status, "color", "#8b93a7")
         text = getattr(status, "label", str(status))
         self.setText(text)
@@ -399,7 +431,7 @@ class ScoreBar(QWidget):
             return current_theme()["warning"]
         return current_theme()["muted"]
 
-    def paintEvent(self, event) -> None:  # noqa: ANN001, N802
+    def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         theme = current_theme()
@@ -540,7 +572,28 @@ def mono_font(size: int = 11) -> QFont:
     return font
 
 
-__all__ = ["PALETTES", "DEFAULT_THEME", "Theme", "apply_theme", "current_theme", "tint", "label",
-           "title_label", "clear_layout", "hline", "button", "open_path", "open_in_browser",
-           "open_in_file_manager", "Card", "StatCard", "StatusChip", "ScoreBar", "Toast",
-           "MarkdownPreviewDialog", "EmptyState", "mono_font", "GLYPHS"]
+__all__ = [
+    "DEFAULT_THEME",
+    "GLYPHS",
+    "PALETTES",
+    "Card",
+    "EmptyState",
+    "MarkdownPreviewDialog",
+    "ScoreBar",
+    "StatCard",
+    "StatusChip",
+    "Theme",
+    "Toast",
+    "apply_theme",
+    "button",
+    "clear_layout",
+    "current_theme",
+    "hline",
+    "label",
+    "mono_font",
+    "open_in_browser",
+    "open_in_file_manager",
+    "open_path",
+    "tint",
+    "title_label",
+]

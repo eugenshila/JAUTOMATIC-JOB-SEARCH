@@ -28,8 +28,18 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..models import (Application, JobPosting, Profile, human_join, now_iso, pretty_term,
-                      slugify, specific_keywords, tokenize, unique_document_path)
+from ..models import (
+    Application,
+    JobPosting,
+    Profile,
+    human_join,
+    now_iso,
+    pretty_term,
+    slugify,
+    specific_keywords,
+    tokenize,
+    unique_document_path,
+)
 
 CATEGORIES = ("opening", "technical", "behavioural", "gap", "role", "ask")
 CATEGORY_LABELS = {
@@ -77,7 +87,7 @@ class PrepQuestion:
                 "source": self.source}
 
     @classmethod
-    def from_dict(cls, data: dict) -> "PrepQuestion":
+    def from_dict(cls, data: dict) -> PrepQuestion:
         data = data or {}
         return cls(question=str(data.get("question") or "").strip(),
                    category=str(data.get("category") or "technical"),
@@ -159,7 +169,7 @@ class InterviewPrep:
                 "generated_at": self.generated_at}
 
     @classmethod
-    def from_dict(cls, data: dict | None) -> "InterviewPrep":
+    def from_dict(cls, data: dict | None) -> InterviewPrep:
         data = data or {}
         questions = [PrepQuestion.from_dict(q) for q in (data.get("questions") or [])
                      if isinstance(q, dict)]
@@ -177,7 +187,7 @@ def question_id(question: str, category: str) -> str:
 # --------------------------------------------------------------------------- #
 # generation
 # --------------------------------------------------------------------------- #
-def _match_lists(match) -> tuple[list[str], list[str]]:  # noqa: ANN001
+def _match_lists(match) -> tuple[list[str], list[str]]:
     matched = list(getattr(match, "matched_keywords", []) or []) if match is not None else []
     missing = list(getattr(match, "missing_keywords", []) or []) if match is not None else []
     return matched, missing
@@ -216,7 +226,7 @@ def _mentions(job: JobPosting, *needles: str) -> bool:
     return any(n in hay for n in needles)
 
 
-def generate_questions(profile: Profile, job: JobPosting, match=None) -> list[PrepQuestion]:  # noqa: ANN001
+def generate_questions(profile: Profile, job: JobPosting, match=None) -> list[PrepQuestion]:
     """Build the question bank for one posting from what we actually know."""
     matched, missing = _match_lists(match)
     questions: list[PrepQuestion] = []
@@ -418,7 +428,10 @@ def render_prep_markdown(prep: InterviewPrep, profile: Profile, job: JobPosting,
 def export_prep(prep: InterviewPrep, profile: Profile, job: JobPosting, output_dir: Path,
                 application: Application | None = None, fmt: str = "md") -> Path:
     """Write the sheet next to the other documents (Markdown by default)."""
-    from .cv_generator import document_suffix, export  # local import: avoids a cycle at load
+    from .cv_generator import (  # local import: avoids a cycle at load
+        document_suffix,
+        export,
+    )
 
     fmt = (fmt or "md").lower()
     stem = (f"PREP_{slugify(profile.display_name, 30)}_{slugify(job.company, 20)}"

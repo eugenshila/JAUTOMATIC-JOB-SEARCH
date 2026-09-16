@@ -1,19 +1,35 @@
 """Profile tab: the single source of truth for everything the generators use."""
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QPlainTextEdit, QScrollArea,
-                               QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPlainTextEdit,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..models import SAMPLE_PROFILE, EducationEntry, ExperienceEntry, Profile
 from ..services.cover_letter import TONE_LABELS, TONES
 from ..services.cv_generator import TEMPLATE_LABELS
 from . import theme as th
+
 
 class ExperienceDialog(QDialog):
     """Add/edit one work-experience entry (bullets separated by new lines)."""
@@ -98,7 +114,7 @@ class ProfileTab(QWidget):
     page_title = "Profile"
     page_subtitle = "Your data feeds the CV generator, the matcher and every letter"
 
-    def __init__(self, ctx) -> None:  # noqa: ANN001 - MainWindow
+    def __init__(self, ctx) -> None:
         super().__init__()
         self.ctx = ctx
         self._dirty = False
@@ -188,7 +204,7 @@ class ProfileTab(QWidget):
         # experience ----------------------------------------------------- #
         experience_card = th.Card("Experience", "Newest first. Bullets become the CV's achievements")
         self.experience_list = QListWidget()
-        self.experience_list.setMinimumHeight(150)
+        self.experience_list.setMinimumHeight(220)
         experience_card.add(self.experience_list)
         row = QHBoxLayout()
         row.addWidget(th.button("Add role", "primary", "", self._add_experience))
@@ -293,6 +309,9 @@ class ProfileTab(QWidget):
         self.save_button = th.button("Save profile", "primary", "Ctrl+S", self.save)
         self.save_button.setShortcut("Ctrl+S")
         actions.add(self.save_button)
+        actions.add(th.button("Import CV file", "primary",
+                              "Parse a CV (docx / txt / md) into this profile",
+                              self._import_cv))
         actions.add(th.button("Reload from disk", "default", "Discard unsaved edits", self.load))
         actions.add(th.button("Load example profile", "default",
                               "Fill every field with a realistic sample", self._load_sample))
@@ -326,7 +345,7 @@ class ProfileTab(QWidget):
         self.salary_floor.setValue(profile.salary_floor)
         self.currency.setCurrentText(profile.currency or "USD")
         index = self.tone.findData(profile.tone)
-        self.tone.setCurrentIndex(index if index >= 0 else 0)
+        self.tone.setCurrentIndex(max(index, 0))
         self.greeting.setText(profile.greeting)
         self.signature.setPlainText(profile.signature)
         self._refresh_experience_list()
@@ -397,10 +416,31 @@ class ProfileTab(QWidget):
     def _refresh_experience_list(self) -> None:
         self.experience_list.clear()
         for entry in self.ctx.profile.experience:
-            text = f"{entry.title or 'Role'} — {entry.company or 'Company'}  ({entry.period})"
-            item = QListWidgetItem(text)
-            item.setToolTip("\n".join(entry.as_bullets()[:6]))
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+            layout.setContentsMargins(8, 4, 8, 4)
+            layout.setSpacing(2)
+            # header: Title — Company (period)  Location
+            head = html.escape(entry.title or "Role")
+            if entry.company:
+                head += f" \u2014 {html.escape(entry.company)}"
+            if entry.start or entry.end:
+                head += (f'  <span style="color:#888">({html.escape(entry.period)})</span>')
+            if entry.location:
+                head += f'  <span style="color:#666">{html.escape(entry.location)}</span>'
+            header = QLabel(head)
+            header.setWordWrap(True)
+            header.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            layout.addWidget(header)
+            for bullet in entry.as_bullets():
+                lab = QLabel(f"  \u2022 {html.escape(bullet)}")
+                lab.setWordWrap(True)
+                lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                layout.addWidget(lab)
+            item = QListWidgetItem()
+            item.setSizeHint(widget.sizeHint())
             self.experience_list.addItem(item)
+            self.experience_list.setItemWidget(item, widget)
 
     def _refresh_education_list(self) -> None:
         self.education_list.clear()
@@ -498,11 +538,11 @@ class ProfileTab(QWidget):
         template = self.ctx.settings.cv_template
         profile = self.ctx.profile
 
-        def work():  # noqa: ANN202
+        def work():
             generator = self.ctx.pipeline.cv_generator
             return generator.generate(profile, None, template, None, self.ctx.settings.export_format)
 
-        def done(document) -> None:  # noqa: ANN001
+        def done(document) -> None:
             self.ctx.open_preview(f"CV preview · {TEMPLATE_LABELS.get(template, template)}",
                                   document.text, None)
 
@@ -532,5 +572,27 @@ class ProfileTab(QWidget):
         self.ctx.refresh_all()
         self.ctx.notify("Profile imported.", "success")
 
+    def _import_cv(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import CV", "", "CV files (*.docx *.txt *.md);;All files (*)")
+        if not path:
+            return
+        from ..services.cv_import import parse_cv
 
-__all__ = ["ProfileTab", "ExperienceDialog", "EducationDialog", "SAMPLE_PROFILE"]
+        def work():
+            return parse_cv(path)
+
+        def done(profile) -> None:
+            self.ctx.save_profile(profile)
+            self.load()
+            self.ctx.refresh_all()
+            self.ctx.notify("CV imported — review the extracted fields and save if needed.",
+                            "success")
+
+        def failed(message: str) -> None:
+            self.ctx.notify(f"Could not import that CV — {message}", "error")
+
+        self.ctx.run_task("Reading your CV", work, done, failed)
+
+
+__all__ = ["SAMPLE_PROFILE", "EducationDialog", "ExperienceDialog", "ProfileTab"]

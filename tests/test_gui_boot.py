@@ -48,7 +48,7 @@ class GuiBootTest(unittest.TestCase):
                 self.app.processEvents()
                 self.assertIn(APP_TITLE, window.windowTitle())
                 self.assertIn(__version__, window.windowTitle())
-                self.assertEqual(len(window.tabs), 5)
+                self.assertEqual(len(window.tabs), 7)
                 self.assertTrue(window.status_label.text())
             finally:
                 window.close()
@@ -168,6 +168,159 @@ class GuiBootTest(unittest.TestCase):
         worker.signals.finished.connect(lambda value: results.append(value))
         worker.run()
         self.assertEqual(results, [7])
+
+    def test_insights_tab_refreshes_with_real_data(self):
+        from datetime import date
+
+        from jautomatic.models import ApplicationStatus, JobPosting
+
+        with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.show()
+                self.app.processEvents()
+                job = JobPosting(
+                    source="sample", title="Senior Python Engineer", company="Northwind",
+                    location="Berlin", remote=True, url="https://example.com/jobs/python",
+                    description="FastAPI services, PostgreSQL modelling, Docker, pytest.",
+                    tags=["python", "fastapi", "postgresql", "docker", "pytest"],
+                    posted_at=date.today().isoformat())
+                window.pipeline.import_jobs([job])
+                application = window.pipeline.ensure_application(job)
+                window.pipeline.set_status(application, ApplicationStatus.SENT)
+                window.pipeline.set_status(application, ApplicationStatus.INTERVIEW, "booked")
+                window.go_to("insights")
+                self.app.processEvents()
+                tab = window.tabs["insights"]
+                self.assertNotEqual(tab.stat_cards["response"].value_label.text(), "—")
+                self.assertEqual(tab.stat_cards["interview"].value_label.text(), "100.0%")
+                self.assertEqual(tab.market_table.rowCount(), 5)
+                self.assertGreater(tab.reply_table.rowCount(), 0)
+                self.assertGreater(tab.source_rows.count(), 0)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def _wait_until(self, predicate, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if predicate():
+                return True
+            time.sleep(0.02)
+        self.app.processEvents()
+        return predicate()
+
+    def test_import_from_url_tracks_via_job_search_tab(self):
+        from unittest import mock
+
+        from jautomatic.models import JobPosting
+
+        with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.show()
+                self.app.processEvents()
+                window.go_to("search")
+                self.app.processEvents()
+                tab = window.tabs["search"]
+                posting = JobPosting(
+                    source="manual", title="Pastry Engineer", company="Patisserie",
+                    location="Lyon", remote=False, salary_min=40000, salary_max=50000,
+                    currency="EUR", url="https://patisserie.example/jobs/1",
+                    description="Make croissants. Layer butter like you mean it.",
+                    tags=["pastry", "butter"], posted_at="2026-09-01")
+                with mock.patch("jautomatic.services.job_scraper.posting_from_url",
+                                return_value=posting):
+                    tab.url_input.setText("patisserie.example/jobs/1")
+                    tab.import_url()
+                    self.assertTrue(
+                        self._wait_until(lambda: len(window.workspace.applications()) == 1),
+                        "the background import must store the posting")
+                    self.app.processEvents()
+                apps = window.workspace.applications()
+                self.assertEqual(len(apps), 1)
+                stored = window.workspace.get_job(apps[0].job_id)
+                self.assertEqual(stored.title, "Pastry Engineer")
+                self.assertEqual(stored.source, "manual")
+                # the app auto-navigates to applications after importing
+                self.assertEqual(window._active_key, "applications")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_auto_refresh_timer_follows_settings(self):
+        with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.show()
+                self.app.processEvents()
+                self.assertFalse(window._refresh_timer.isActive())
+                settings = window.settings
+                settings.auto_refresh_enabled = True
+                settings.auto_refresh_minutes = 5
+                window.save_settings(settings)
+                self.assertTrue(window._refresh_timer.isActive())
+                self.assertEqual(window._refresh_timer.interval(), 5 * 60_000)
+                settings.auto_refresh_enabled = False
+                window.save_settings(settings)
+                self.assertFalse(window._refresh_timer.isActive())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_background_refresh_reports_fresh_postings(self):
+        import types
+        from unittest import mock
+
+        from jautomatic.models import JobPosting
+        from jautomatic.services.job_scraper import JobScraper
+
+        with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.show()
+                self.app.processEvents()
+                posting = JobPosting(
+                    source="sample", title="Fresh Role", company="Fresher",
+                    location="Remote", remote=True, salary_min=50000, salary_max=70000,
+                    currency="USD", url="https://example.com/fresh", description="New band",
+                    tags=["python"], posted_at="2026-09-16")
+                outcome = types.SimpleNamespace(jobs=[posting], errors=[])
+                window.settings.notify_new_matches = False
+                with mock.patch.object(JobScraper, "search", return_value=outcome):
+                    window.background_refresh()
+                    self.assertTrue(
+                        self._wait_until(lambda: len(window._background_notes) >= 1),
+                        "the background refresh must report its outcome")
+                self.assertIn("1 new", window._background_notes[0])
+                self.assertNotIn("New roles found", window._background_notes[0])
+                # only AFTER the first batch the desktop alert is requested again
+                window.settings.notify_new_matches = True
+                with mock.patch.object(JobScraper, "search", return_value=outcome):
+                    window.background_refresh()
+                    self.assertTrue(
+                        self._wait_until(lambda: any("New roles found" in note
+                                                     for note in window._background_notes)),
+                        "the new-match alert must fire")
+                self.assertEqual(window.tabs["search"].outcome.jobs, [posting])
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_insights_tab_shows_empty_state_gracefully(self):
+        with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.go_to("insights")
+                self.app.processEvents()
+                tab = window.tabs["insights"]
+                self.assertEqual(tab.market_table.rowCount(), 0)
+                self.assertEqual(tab.reply_table.rowCount(), 0)
+                self.assertEqual(tab.stat_cards["reply"].value_label.text(), "—")
+            finally:
+                window.close()
+                self.app.processEvents()
 
 
 if __name__ == "__main__":

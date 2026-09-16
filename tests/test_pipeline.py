@@ -9,10 +9,32 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from jautomatic.models import (SAMPLE_PROFILE, Application, ApplicationStatus, JobPosting,
-                               Profile, Workspace, pretty_term, human_join, parse_date, slugify,
-                               unique_document_path)
-from jautomatic.services.application_pipeline import ApplicationPipeline, match_job, rank_jobs
+from jautomatic.models import (
+    SAMPLE_PROFILE,
+    Application,
+    ApplicationStatus,
+    AppSettings,
+    JobPosting,
+    Profile,
+    human_join,
+    parse_date,
+    pretty_term,
+    slugify,
+    unique_document_path,
+)
+from jautomatic.services.application_pipeline import (
+    ApplicationPipeline,
+    filter_min_score,
+    match_job,
+    min_pay_ok,
+    rank_jobs,
+)
+from jautomatic.services.cover_letter import (
+    CoverLetterService,
+    MatchContext,
+    OllamaError,
+    ollama_chat,
+)
 from tests.support import WorkspaceTestCase
 
 
@@ -149,10 +171,56 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(ranked[0][0].title, "Senior Python Engineer")
         self.assertGreaterEqual(ranked[0][1].score, ranked[1][1].score)
 
+    def test_min_match_filter_drops_weak_results(self):
+        ranked = rank_jobs(sample_profile(), [welder_job(), python_job()])
+        kept = filter_min_score(ranked, 70)
+        self.assertEqual([job.title for job, _ in kept], ["Senior Python Engineer"])
+        self.assertTrue(all(match.score >= 70 for _, match in kept))
+
+    def test_min_match_filter_zero_and_absent_keep_everything(self):
+        ranked = rank_jobs(sample_profile(), [welder_job(), python_job()])
+        self.assertEqual(filter_min_score(ranked, 0), ranked)
+        self.assertEqual(filter_min_score(ranked), ranked)
+        self.assertEqual(filter_min_score(ranked, -5), ranked)
+        self.assertEqual(filter_min_score([], 70), [])
+
     def test_empty_profile_does_not_crash(self):
         result = match_job(Profile(), python_job())
         self.assertIsInstance(result.score, int)
         self.assertTrue(0 <= result.score <= 100)
+
+
+class MinPayFilterTests(unittest.TestCase):
+    def _job(self, low: int = 0, high: int = 0, currency: str = "USD") -> JobPosting:
+        return JobPosting(source="tasks", title="Audio transcription", company="Board",
+                          location="Remote", remote=True, salary_min=low, salary_max=high,
+                          currency=currency, url="https://example.com/tasks/1",
+                          description="Transcribe short audio clips.", tags=["audio"],
+                          posted_at=date.today().isoformat())
+
+    def test_floor_zero_or_absent_accepts_everything(self):
+        job = self._job(low=1, high=2)
+        self.assertTrue(min_pay_ok(job, 0))
+        self.assertTrue(min_pay_ok(job))
+        self.assertTrue(min_pay_ok(job, -5))
+        self.assertTrue(min_pay_ok(None, 10))
+        self.assertTrue(min_pay_ok([], 10))
+
+    def test_usd_at_or_above_floor(self):
+        self.assertTrue(min_pay_ok(self._job(low=10, high=25), 10))
+        self.assertTrue(min_pay_ok(self._job(low=12, high=18), 10))
+        self.assertTrue(min_pay_ok(self._job(low=0, high=12), 10))
+
+    def test_quoted_range_is_judged_by_its_low_end(self):
+        self.assertFalse(min_pay_ok(self._job(low=8, high=45), 10))
+
+    def test_below_floor_is_rejected(self):
+        self.assertFalse(min_pay_ok(self._job(low=8, high=9), 10))
+        self.assertFalse(min_pay_ok(self._job(low=0, high=0), 10))
+
+    def test_non_usd_is_rejected_even_when_high(self):
+        self.assertFalse(min_pay_ok(self._job(low=12000, high=15000, currency="EUR"), 10))
+        self.assertFalse(min_pay_ok(self._job(low=12000, high=15000, currency=""), 10))
 
 
 class PipelineTests(WorkspaceTestCase):
@@ -323,6 +391,127 @@ class PipelineTests(WorkspaceTestCase):
         self.pipeline.postpone_follow_up(application, 5)
         self.assertEqual(self.pipeline.follow_ups_due(self.profile), [])
 
+    def test_follow_up_ladder_escalates_and_ends(self):
+        self.settings.follow_up_repeat_days = 5
+        self.settings.follow_up_max_nudges = 3
+        row = self._tracked()
+        application = self.pipeline.set_status(row.application, ApplicationStatus.SENT)
+        application.follow_up_at = (date.today() - timedelta(days=1)).isoformat()
+        self.workspace.save_application(application)
+
+        first_path, first_text = self.pipeline.draft_follow_up(application)
+        stored = self.workspace.get_application(application.application_id)
+        self.assertEqual(stored.follow_up_count, 1)
+        self.assertIn("Following up", first_text)
+        self.assertEqual(stored.follow_up_at,
+                         (date.today() + timedelta(days=5)).isoformat())
+
+        stored.follow_up_at = (date.today() - timedelta(days=1)).isoformat()
+        self.workspace.save_application(stored)
+        second_path, second_text = self.pipeline.draft_follow_up(stored)
+        self.assertIn("Still interested", second_text)
+        self.assertNotEqual(first_path.name, second_path.name)
+
+        stored = self.workspace.get_application(application.application_id)
+        stored.follow_up_at = (date.today() - timedelta(days=1)).isoformat()
+        self.workspace.save_application(stored)
+        third_path, third_text = self.pipeline.draft_follow_up(stored)
+        self.assertIn("last follow-up", third_text)
+        finished = self.workspace.get_application(application.application_id)
+        self.assertEqual(finished.follow_up_count, 3)
+        self.assertEqual(finished.follow_up_at, "")          # ladder spent: no more "due"
+        self.assertFalse(self.pipeline.follow_ups_due(self.profile))
+
+    def test_interview_offer_or_closed_stops_follow_ups(self):
+        row = self._tracked()
+        application = self.pipeline.set_status(row.application, ApplicationStatus.SENT)
+        application.follow_up_at = (date.today() + timedelta(days=3)).isoformat()
+        self.workspace.save_application(application)
+        self.pipeline.set_status(application, ApplicationStatus.INTERVIEW, "booked")
+        stored = self.workspace.get_application(application.application_id)
+        self.assertEqual(stored.follow_up_at, "")
+        self.assertFalse(stored.follow_up_due)
+        # ... and rejected/archived do the same
+        other = self.pipeline.set_status(row.application, ApplicationStatus.SENT)
+        other.follow_up_at = (date.today() + timedelta(days=3)).isoformat()
+        self.workspace.save_application(other)
+        self.pipeline.set_status(other, ApplicationStatus.REJECTED, "not a fit")
+        self.assertEqual(self.workspace.get_application(
+            other.application_id).follow_up_at, "")
+
+    def test_analytics_shape_and_funnel(self):
+        self.pipeline.import_jobs([python_job(), python_job(title="Data Engineer", company="Helio",
+                                                            url="https://example.com/jobs/heli"),
+                                   welder_job()])
+        first, second = self.workspace.applications()[0], self.workspace.applications()[1]
+        self.pipeline.set_status(first, ApplicationStatus.SENT)
+        self.pipeline.set_status(second, ApplicationStatus.SENT)
+        self.pipeline.set_status(second, ApplicationStatus.INTERVIEW, "booked")
+
+        data = self.pipeline.analytics(self.profile)
+        self.assertEqual([row["value"] for row in data["funnel"]], [3, 2, 1, 0])
+        self.assertEqual([row["label"] for row in data["funnel"]],
+                         ["Tracked", "Sent", "Interview", "Offer"])
+        self.assertEqual(data["rates"]["response"], 50.0)
+        self.assertEqual(data["rates"]["interview"], 50.0)
+        self.assertEqual(data["rates"]["offer"], 0.0)
+        self.assertEqual(len(data["weekly"]), 8)
+        self.assertEqual(sum(row["created"] for row in data["weekly"]), 3)
+        self.assertEqual(len(data["score_buckets"]), 4)
+        self.assertEqual(sum(row["count"] for row in data["score_buckets"]), 3)
+        self.assertEqual(sum(row["count"] for row in data["by_source"]), 3)
+        # the only reply so far is today's interview: one row, zero days
+        self.assertEqual(len(data["response_times"]), 1)
+        title, company, days, outcome = data["response_times"][0]
+        self.assertEqual(outcome, "Interview")
+        self.assertEqual(days, 0)
+        self.assertTrue(company)
+
+    def test_market_intelligence_counts_tags_and_flags_profile_gaps(self):
+        self.pipeline.import_jobs([python_job(),
+                                   python_job(title="Data Engineer", company="Helio",
+                                              url="https://example.com/jobs/heli")])
+        data = self.pipeline.market_intelligence(self.profile)
+        tags = {row["tag"]: row for row in data}
+        self.assertIn("fastapi", tags)
+        self.assertEqual(tags["fastapi"]["count"], 2)
+        self.assertEqual(tags["fastapi"]["titles"], ["Data Engineer", "Senior Python Engineer"])
+        self.assertIsInstance(tags["fastapi"]["have"], bool)
+        # every tag advertised by both postings is "most demanded" on top
+        self.assertEqual(data[0]["count"], 2)
+        # short and generic terms (remote, etc.) never show up
+        self.assertEqual(len(data), 7)
+        self.assertNotIn("remote", tags)
+        self.assertTrue(all(len(row["tag"]) >= 3 for row in data))
+        # non-empty search space: market covers only postings already stored
+        self.assertEqual(self.pipeline.market_intelligence(self.profile, limit=2),
+                         data[:2])
+
+    def test_import_from_url_tracks_once_and_refreshes_duplicates(self):
+        from unittest import mock
+
+        expected = python_job(url="https://example.com/jobs/pasted", source="manual")
+        with mock.patch("jautomatic.services.job_scraper.posting_from_url",
+                        return_value=expected) as scrape:
+            application, created = self.pipeline.import_from_url(
+                "https://example.com/jobs/pasted")
+        scrape.assert_called_once()
+        self.assertTrue(created)
+        self.assertEqual(self.pipeline.tracker(self.profile)[0].job.url, expected.url)
+
+        # the same URL again must refresh the posting, never add a second entry
+        refreshed = python_job(url="https://example.com/jobs/pasted", source="manual",
+                               description="Now with a rewritten description.")
+        with mock.patch("jautomatic.services.job_scraper.posting_from_url",
+                        return_value=refreshed):
+            again, was_created = self.pipeline.import_from_url(
+                "https://example.com/jobs/pasted")
+        self.assertFalse(was_created)
+        self.assertEqual(again.application_id, application.application_id)
+        self.assertEqual(len(self.workspace.applications()), 1)
+        stored = self.workspace.get_job(expected.job_id)
+        self.assertIn("rewritten", stored.description)
+
     def test_notes_and_manual_status_are_persisted(self):
         row = self._tracked()
         self.pipeline.update_notes(row.application, "Recruiter call on Thursday.")
@@ -394,6 +583,106 @@ class PipelineTests(WorkspaceTestCase):
     def test_status_is_coerced_from_unknown_value(self):
         application = Application(job_id="x", status="banana")
         self.assertEqual(application.status_enum, ApplicationStatus.DISCOVERED)
+
+
+class OllamaCoverLetterTests(WorkspaceTestCase):
+    """Local LLM drafting: chat plumbing, prompt, and template fallback."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.save_profile(sample_profile())
+        self.pipeline = ApplicationPipeline(self.workspace, self.workspace.load_settings())
+        self.profile = self.workspace.load_profile()
+        self.job = python_job()
+
+    def _mock_post(self, payload_to_return, status=200):
+        from unittest import mock
+
+        response = mock.Mock()
+        response.status_code = status
+        response.json.return_value = payload_to_return
+        return mock.patch("requests.post", return_value=response)
+
+    def test_ollama_chat_builds_the_chat_request(self):
+        with self._mock_post({"message": {"content": "  A fine letter.  "}}) as post:
+            result = ollama_chat("http://localhost:11434", "llama3.2", "Dear team…", 90)
+        self.assertEqual(result, "A fine letter.\n")
+        url, kwargs = post.call_args
+        self.assertTrue(url[0].endswith("/api/chat"))
+        self.assertEqual(kwargs["json"]["model"], "llama3.2")
+        self.assertEqual(kwargs["json"]["messages"][0]["content"], "Dear team…")
+        self.assertEqual(kwargs["json"]["stream"], False)
+
+    def test_ollama_chat_raises_on_an_error_status(self):
+        with self.assertRaisesRegex(OllamaError, "HTTP 500"):
+            with self._mock_post({}, status=500):
+                ollama_chat("http://localhost:11434", "llama3.2", "x")
+
+    def test_ollama_chat_raises_when_unreachable(self):
+        from unittest import mock
+
+        import requests
+
+        with mock.patch("requests.post",
+                        side_effect=requests.exceptions.ConnectionError("connection refused")):
+            with self.assertRaises(OllamaError):
+                ollama_chat("http://localhost:11434", "llama3.2", "x")
+
+    def test_generate_uses_ollama_when_enabled(self):
+        from unittest import mock
+
+        with mock.patch("jautomatic.services.cover_letter.ollama_cover_letter",
+                        return_value="An AI letter.\n") as draft:
+            document = CoverLetterService().generate(
+                self.profile, self.job, MatchContext(), "professional",
+                llm={"model": "llama3.2", "base_url": "http://localhost:11434", "timeout": 60})
+        draft.assert_called_once()
+        self.assertEqual(document.text, "An AI letter.\n")
+        self.assertEqual(document.warning, "")
+
+    def test_generate_falls_back_to_template_on_ollama_error(self):
+        from unittest import mock
+
+        with mock.patch("jautomatic.services.cover_letter.ollama_cover_letter",
+                        side_effect=OllamaError("offline")):
+            document = CoverLetterService().generate(
+                self.profile, self.job, MatchContext(), "professional",
+                llm={"model": "llama3.2", "base_url": "http://localhost:11434"})
+        self.assertIn("I am applying for the Senior Python Engineer position", document.text)
+        self.assertIn("template instead", document.warning)
+
+    def test_prepare_uses_ollama_when_provider_configured(self):
+        from unittest import mock
+
+        self.pipeline.settings.llm_provider = "ollama"
+        self.pipeline.settings.llm_model = "mistral-nemo"
+        self.pipeline.scraper.settings = self.pipeline.settings
+        row = self._tracked()
+        with mock.patch("jautomatic.services.cover_letter.ollama_cover_letter",
+                        return_value="Local-model letter body.\n") as draft:
+            materials = self.pipeline.prepare(row.application, self.profile)
+        draft.assert_called_once()
+        self.assertEqual(materials.cover_letter.text, "Local-model letter body.\n")
+        self.assertTrue(materials.cover_letter.path.exists())
+        self.assertEqual(materials.cover_letter.warning, "")
+
+    def test_prepare_falls_back_when_ollama_is_off(self):
+        from unittest import mock
+
+        self.pipeline.settings.llm_provider = "ollama"
+        self.pipeline.scraper.settings = self.pipeline.settings
+        row = self._tracked()
+        with mock.patch("jautomatic.services.cover_letter.ollama_cover_letter",
+                        side_effect=OllamaError("offline")):
+            materials = self.pipeline.prepare(row.application, self.profile)
+        self.assertIn("I am applying for the Senior Python Engineer position",
+                      materials.cover_letter.text)
+        self.assertIn("template instead", materials.cover_letter.warning)
+        self.assertTrue(materials.cover_letter.path.exists())
+
+    def _tracked(self):
+        application = self.pipeline.ensure_application(self.job)
+        return self.pipeline.tracker(self.profile)[0] if application else None
 
 
 class ModelHelperTests(unittest.TestCase):
@@ -474,3 +763,72 @@ class ModelHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class ClearTests(WorkspaceTestCase):
+    """Archive/clear and auto-clear of unacted applications."""
+
+    def _make_application(self, job, *, created_at: str, status: str = "discovered") -> Application:
+        app = Application(job_id=job.job_id, created_at=created_at, status=status)
+        return self.workspace.save_application(app)
+
+    def test_clear_application(self):
+        pipeline = ApplicationPipeline(self.workspace, AppSettings())
+        job = python_job()
+        self.workspace.save_jobs([job])
+        app = self._make_application(job, created_at=date.today().isoformat() + " 00:00:00")
+        pipeline.clear_application(app)
+        loaded = self.workspace.get_application(app.application_id)
+        self.assertEqual(loaded.status, ApplicationStatus.ARCHIVED.value)
+
+    def test_auto_clear_archives_stale_unacted(self):
+        old_created = (date.today() - timedelta(days=10)).isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=5))
+        job = python_job()
+        self.workspace.save_jobs([job])
+        app = self._make_application(job, created_at=old_created)
+        pipeline.auto_clear_unacted()
+        loaded = self.workspace.get_application(app.application_id)
+        self.assertEqual(loaded.status, ApplicationStatus.ARCHIVED.value)
+
+    def test_auto_clear_keeps_recent(self):
+        recent_created = date.today().isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=5))
+        job = python_job()
+        self.workspace.save_jobs([job])
+        app = self._make_application(job, created_at=recent_created)
+        pipeline.auto_clear_unacted()
+        loaded = self.workspace.get_application(app.application_id)
+        self.assertEqual(loaded.status, ApplicationStatus.DISCOVERED.value)
+
+    def test_auto_clear_keeps_acted(self):
+        old_created = (date.today() - timedelta(days=20)).isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=5))
+        job = python_job()
+        self.workspace.save_jobs([job])
+        app = self._make_application(job, created_at=old_created, status="materials_ready")
+        pipeline.auto_clear_unacted()
+        loaded = self.workspace.get_application(app.application_id)
+        self.assertEqual(loaded.status, ApplicationStatus.MATERIALS_READY.value)
+
+    def test_auto_clear_disabled_when_zero(self):
+        old_created = (date.today() - timedelta(days=30)).isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=0))
+        job = python_job()
+        self.workspace.save_jobs([job])
+        app = self._make_application(job, created_at=old_created)
+        self.assertEqual(pipeline.auto_clear_unacted(), 0)
+        loaded = self.workspace.get_application(app.application_id)
+        self.assertEqual(loaded.status, ApplicationStatus.DISCOVERED.value)
+
+    def test_auto_clear_returns_count(self):
+        old_created = (date.today() - timedelta(days=15)).isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=7))
+        jobs = [python_job(), welder_job()]
+        self.workspace.save_jobs(jobs)
+        self._make_application(jobs[0], created_at=old_created)
+        self._make_application(jobs[1], created_at=old_created, status="shortlisted")
+        self.assertEqual(pipeline.auto_clear_unacted(), 2)
+
+    def test_default_setting_has_clear_days(self):
+        self.assertEqual(AppSettings().auto_clear_days, 5)

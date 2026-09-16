@@ -1,9 +1,15 @@
 """Cover-letter drafting.
 
-Keeps everything deterministic and template driven (no hidden AI calls): the
-letter is assembled from the profile, the posting and the match analysis, so
-the output is always explainable and reproducible.  Four tones are supported
-and the paragraph about *why this company* is written from the posting text.
+The default path is entirely deterministic and template driven (no hidden AI
+calls): the letter is assembled from the profile, the posting and the match
+analysis, so the output is always explainable and reproducible.  Four tones
+are supported and the paragraph about *why this company* is written from the
+posting text.
+
+As an *opt-in* extra, letters can be drafted by a local LLM (Ollama) — it
+talks only to ``base_url`` (default ``http://localhost:11434``), nothing
+leaves the machine.  The deterministic template remains the fallback whenever
+Ollama is missing, busy or returns unusable text.
 """
 from __future__ import annotations
 
@@ -12,8 +18,18 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ..models import (JobPosting, Profile, human_join, keywords, pretty_term, slugify,
-                      source_label, specific_keywords, tokenize, unique_document_path)
+from ..models import (
+    JobPosting,
+    Profile,
+    human_join,
+    keywords,
+    pretty_term,
+    slugify,
+    source_label,
+    specific_keywords,
+    tokenize,
+    unique_document_path,
+)
 from .cv_generator import GeneratedDocument, document_suffix, export
 
 TONES = ("professional", "friendly", "enthusiastic", "concise")
@@ -221,16 +237,130 @@ def render_cover_letter(profile: Profile, job: JobPosting, match: MatchContext |
     return letter
 
 
+# --------------------------------------------------------------------------- #
+# optional local LLM (Ollama) drafting — explicit opt-in, template as fallback
+# --------------------------------------------------------------------------- #
+class OllamaError(RuntimeError):
+    """Ollama is unreachable, misbehaving or returned no usable text."""
+
+
+def ollama_ping(base_url: str, timeout: int = 10) -> str:
+    """Return the running Ollama version string, or raise ``OllamaError``."""
+    import requests as _requests  # local: only imported when the feature is used
+
+    url = base_url.rstrip("/") + "/api/version"
+    try:
+        response = _requests.get(url, timeout=timeout)
+    except _requests.exceptions.RequestException as exc:
+        raise OllamaError(f"could not reach Ollama at {base_url}: {exc}") from exc
+    if response.status_code != 200:
+        raise OllamaError(f"Ollama answered HTTP {response.status_code}")
+    try:
+        return str(response.json().get("version", "unknown"))
+    except ValueError as exc:
+        raise OllamaError("Ollama returned a non-JSON answer") from exc
+
+
+def ollama_chat(base_url: str, model: str, message: str, timeout: int = 90) -> str:
+    """Send one chat message; return the model's reply (stripped, \\n-terminated)."""
+    import requests as _requests  # local: only imported when the feature is used
+
+    url = base_url.rstrip("/") + "/api/chat"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": message}],
+        "stream": False,
+        "options": {"temperature": 0.4, "num_predict": 900},
+    }
+    try:
+        response = _requests.post(url, json=payload, timeout=timeout)
+    except _requests.exceptions.RequestException as exc:
+        raise OllamaError(f"could not reach Ollama at {base_url}: {exc}") from exc
+    if response.status_code != 200:
+        raise OllamaError(f"Ollama answered HTTP {response.status_code}")
+    try:
+        content = (response.json().get("message") or {}).get("content")
+    except ValueError as exc:
+        raise OllamaError("Ollama returned a non-JSON answer") from exc
+    content = (content or "").strip()
+    if not content:
+        raise OllamaError("Ollama returned an empty letter")
+    return content.rstrip() + "\n"
+
+
+def _experience_summary(profile: Profile, limit: int = 4) -> str:
+    bits = []
+    for entry in profile.experience[:limit]:
+        when = f"{entry.start} – {entry.end or 'present'}"
+        note = (entry.title or entry.summary or "Work experience").strip()
+        bits.append(f"{note} at {entry.company} ({when})" if entry.company
+                    else f"{note} ({when})")
+    return " | ".join(bits) if bits else "no experience entries recorded"
+
+
+def ollama_cover_letter(profile: Profile, job: JobPosting, match: MatchContext | None,
+                        tone: str | None, base_url: str, model: str,
+                        timeout: int = 90) -> str:
+    """Draft a complete letter via local Ollama. Raises ``OllamaError`` on failure."""
+    tone = (tone or profile.tone or "professional").lower()
+    if tone not in TONES:
+        tone = "professional"
+    match = match or MatchContext()
+    prompt = (
+        f"You are writing a professional cover letter for a job posting "
+        f"({tone} tone).\n\n"
+        f"Job title: {job.title}\n"
+        f"Company: {job.company}\n"
+        f"Location: {job.location or 'remote'}\n"
+        f"Posting tags: {', '.join(job.tags) or 'none'}\n"
+        f"Advertised description: {job.description.strip() or '(none given)'}\n\n"
+        f"Applicant full name: {profile.display_name}\n"
+        f"Applicant headline: {profile.headline.strip() or '(none)'}\n"
+        f"Applicant skills: {', '.join(profile.skills) or 'none'}\n"
+        f"Experience: {_experience_summary(profile)}\n"
+        f"Keywords the applicant matches: {', '.join(match.matched_keywords) or 'none'}\n\n"
+        "Write the complete, ready-to-send letter now. Start with a greeting line, "
+        "use the applicant's real skills and experience (never invent qualifications), "
+        "mention the company and role from the posting, and end with a 'Best regards' "
+        "signature for the applicant. Keep it to 4-6 short paragraphs, plain text, "
+        "no headings and no markdown formatting."
+    )
+    return ollama_chat(base_url, model, prompt, timeout)
+
+
 class CoverLetterService:
     """Writes the letter to disk (docx/md/txt) and returns the rendered text."""
 
     def generate(self, profile: Profile, job: JobPosting, match: MatchContext | None = None,
                  tone: str | None = None, output_dir: Path | None = None,
-                 fmt: str = "docx", *, reuse: str | Path | None = None) -> GeneratedDocument:
-        markdown = render_cover_letter(profile, job, match, tone)
+                 fmt: str = "docx", *, reuse: str | Path | None = None,
+                 llm: dict | None = None) -> GeneratedDocument:
+        """Render a letter; ``llm`` (opt-in) switches to local Ollama drafting.
+
+        ``llm`` is a small dict (``model``/``base_url``/``timeout``).  When
+        Ollama fails for any reason the deterministic template is used instead
+        and the returned document carries a ``warning`` explaining why.
+        """
+        warning = ""
+        if llm:
+            try:
+                markdown = ollama_cover_letter(
+                    profile, job, match, tone, llm.get("base_url")
+                    or "http://localhost:11434", llm.get("model") or "llama3.2",
+                    int(llm.get("timeout") or 90))
+            except OllamaError as exc:
+                markdown = render_cover_letter(profile, job, match, tone)
+                warning = f"Local AI not available ({exc}); used the template instead."
+            except Exception as exc:  # noqa: BLE001 - never let a draft kill the batch
+                markdown = render_cover_letter(profile, job, match, tone)
+                warning = f"Local AI drafting failed ({exc.__class__.__name__}); " \
+                          "used the template instead."
+        else:
+            markdown = render_cover_letter(profile, job, match, tone)
         document = GeneratedDocument(
             kind="cover_letter", text=markdown, template=(tone or profile.tone or "professional"),
-            used_keywords=list((match.matched_keywords if match else []) or [])[:10])
+            used_keywords=list((match.matched_keywords if match else []) or [])[:10],
+            warning=warning)
         if output_dir is not None:
             stem = (f"CoverLetter_{slugify(profile.display_name, 24)}_"
                     f"{slugify(job.company, 18)}_{slugify(job.title, 20)}")
@@ -257,5 +387,15 @@ def top_keywords_from_job(job: JobPosting, limit: int = 12) -> list[str]:
     return out
 
 
-__all__ = ["CoverLetterService", "MatchContext", "TONES", "render_cover_letter",
-           "top_keywords_from_job", "date"]
+__all__ = [
+    "TONES",
+    "CoverLetterService",
+    "MatchContext",
+    "OllamaError",
+    "date",
+    "ollama_chat",
+    "ollama_cover_letter",
+    "ollama_ping",
+    "render_cover_letter",
+    "top_keywords_from_job",
+]

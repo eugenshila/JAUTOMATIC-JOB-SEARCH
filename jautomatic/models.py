@@ -25,7 +25,7 @@ from pathlib import Path
 
 APP_NAME = "JAUTOMATIC"
 APP_SLUG = "jautomatic-job-search"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_FOLLOW_UP_DAYS = 7
 
 
@@ -168,7 +168,8 @@ WORDS = re.compile(r"[a-zA-Z][a-zA-Z0-9+#.\-]*")
 # Display names for job sources (the cover letter / e-mail mention where a role was found).
 SOURCE_LABELS = {
     "remotive": "Remotive", "arbeitnow": "Arbeitnow", "remoteok": "RemoteOK",
-    "adzuna": "Adzuna", "sample": "the sample job feed",
+    "himalayas": "Himalayas", "uae_ai": "UAE AI jobs",
+    "adzuna": "Adzuna", "sample": "the sample job feed", "manual": "manually pasted link",
 }
 
 # Terms that look wrong when title-cased naively - used when skills appear in prose.
@@ -327,7 +328,7 @@ class ApplicationStatus(str, Enum):
         return not self.is_closed
 
     @classmethod
-    def ordered(cls) -> list["ApplicationStatus"]:
+    def ordered(cls) -> list[ApplicationStatus]:
         return [cls.DISCOVERED, cls.SHORTLISTED, cls.MATERIALS_READY, cls.SENT,
                 cls.INTERVIEW, cls.OFFER, cls.REJECTED, cls.ARCHIVED]
 
@@ -449,7 +450,7 @@ class JobPosting:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "JobPosting":
+    def from_dict(cls, data: dict) -> JobPosting:
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         payload = {k: v for k, v in (data or {}).items() if k in known}
         payload["tags"] = list(payload.get("tags") or [])
@@ -557,7 +558,7 @@ class Profile:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict | None) -> "Profile":
+    def from_dict(cls, data: dict | None) -> Profile:
         data = data or {}
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         payload = {k: v for k, v in data.items() if k in known}
@@ -643,6 +644,7 @@ class Application:
     updated_at: str = field(default_factory=now_iso)
     sent_at: str = ""
     follow_up_at: str = ""
+    follow_up_count: int = 0             # nudges already drafted for this application
     interview_at: str = ""               # "YYYY-MM-DD" or "YYYY-MM-DD HH:MM"
     notes: str = ""
     cv_path: str = ""
@@ -680,6 +682,11 @@ class Application:
         return bool(when and when <= date.today() and self.status_enum.is_active)
 
     @property
+    def is_unacted(self) -> bool:
+        """Discovered/shortlisted — never prepared, sent or otherwise moved on."""
+        return self.status_enum in (ApplicationStatus.DISCOVERED, ApplicationStatus.SHORTLISTED)
+
+    @property
     def days_since_sent(self) -> int | None:
         when = parse_date(self.sent_at)
         return (date.today() - when).days if when else None
@@ -687,6 +694,13 @@ class Application:
     def schedule_follow_up(self, days: int = DEFAULT_FOLLOW_UP_DAYS) -> None:
         self.follow_up_at = (date.today() + timedelta(days=days)).isoformat()
         self.log("follow-up scheduled", f"in {days} day(s)")
+
+    def rung_label(self, max_nudges: int = 0) -> str:
+        """Human label for the next follow-up rung ("First"/"Second"/"Final"…)."""
+        rug = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"]
+        if max_nudges and self.follow_up_count >= max_nudges - 1:
+            return "Final"
+        return rug[self.follow_up_count] if self.follow_up_count < len(rug) else f"#{self.follow_up_count + 1}"
 
     @property
     def interview_scheduled(self) -> bool:
@@ -733,7 +747,7 @@ class Application:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Application":
+    def from_dict(cls, data: dict) -> Application:
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         payload = {k: v for k, v in (data or {}).items() if k in known}
         payload["history"] = list(payload.get("history") or [])
@@ -743,6 +757,10 @@ class Application:
             payload["match_score"] = int(payload.get("match_score") or 0)
         except (TypeError, ValueError):
             payload["match_score"] = 0
+        try:
+            payload["follow_up_count"] = int(payload.get("follow_up_count") or 0)
+        except (TypeError, ValueError):
+            payload["follow_up_count"] = 0
         return cls(**payload)
 
 
@@ -759,11 +777,16 @@ class AppSettings:
     autopilot_min_score: int = 70
     autopilot_max_per_run: int = 5
     follow_up_days: int = DEFAULT_FOLLOW_UP_DAYS
+    follow_up_repeat_days: int = 5       # interval between later nudges in the ladder
+    follow_up_max_nudges: int = 3        # total follow-ups before the series stops
+    auto_clear_days: int = 5             # archive untouched (never prepared/sent) apps older than this (0 = off)
     include_cover_letter: bool = True
     include_email_draft: bool = True
     cv_template: str = "modern"           # modern | classic | compact
     export_format: str = "docx"           # docx | md | txt
     min_salary: int = 0
+    min_match_score: int = 70               # results below this match score are hidden (0 = off)
+    min_pay_usd: int = 10                   # Tasks search: only gigs advertising >= this per task (0 = off)
     remote_only: bool = False
     exclude_keywords: str = ""            # comma separated, filters out postings
     theme: str = "midnight"
@@ -771,6 +794,13 @@ class AppSettings:
     adzuna_app_key: str = ""
     adzuna_country: str = "gb"
     last_search_query: str = ""
+    auto_refresh_enabled: bool = False    # timed re-scrape of the enabled boards
+    auto_refresh_minutes: int = 30        # every N minutes when enabled
+    notify_new_matches: bool = True       # tray/desktop alert when a refresh finds fresh roles
+    llm_provider: str = "none"            # none | ollama (local LLM, fully opt-in)
+    llm_model: str = "llama3.2"           # Ollama model used for draft letters
+    llm_base_url: str = "http://localhost:11434"
+    llm_timeout: int = 90                 # generous: local generation is slow
     # Base64-encoded QMainWindow geometry, written by the window on close.
     # Lives here (not in QSettings) so the data dir really is the whole story:
     # deleting it *is* a full reset, with no stray HKCU registry key behind.
@@ -789,18 +819,24 @@ class AppSettings:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict | None) -> "AppSettings":
+    def from_dict(cls, data: dict | None) -> AppSettings:
         data = data or {}
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         payload = {k: v for k, v in data.items() if k in known}
         payload["enabled_sources"] = [str(s) for s in payload.get("enabled_sources") or []]
         for key in ("results_per_source", "request_timeout", "autopilot_min_score",
-                    "autopilot_max_per_run", "follow_up_days", "min_salary"):
+                    "autopilot_max_per_run", "follow_up_days", "follow_up_repeat_days",
+                    "follow_up_max_nudges", "auto_clear_days",
+                    "min_salary", "min_match_score", "min_pay_usd",
+                    "auto_refresh_minutes", "llm_timeout"):
+            if key not in data:
+                continue  # absent keys keep the dataclass default (settings migrate cleanly)
             try:
                 payload[key] = int(payload.get(key) or 0)
             except (TypeError, ValueError):
                 payload[key] = getattr(cls(), key)
-        for key in ("autopilot", "include_cover_letter", "include_email_draft", "remote_only"):
+        for key in ("autopilot", "include_cover_letter", "include_email_draft", "remote_only",
+                    "auto_refresh_enabled", "notify_new_matches"):
             payload[key] = bool(payload.get(key))
         return cls(**payload)
 
@@ -818,7 +854,7 @@ def synchronized(method):
     """
 
     @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    def wrapper(self, *args, **kwargs):
         with self._lock:
             return method(self, *args, **kwargs)
 
@@ -902,6 +938,9 @@ class Workspace:
             cur.execute("ALTER TABLE applications ADD COLUMN prep TEXT DEFAULT '{}'")
         if "prep_path" not in columns:
             cur.execute("ALTER TABLE applications ADD COLUMN prep_path TEXT DEFAULT ''")
+        # v3 -> v4: the escalating follow-up ladder tracks how many nudges went out.
+        if "follow_up_count" not in columns:
+            cur.execute("ALTER TABLE applications ADD COLUMN follow_up_count INTEGER DEFAULT 0")
         row = cur.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if row is None:
             cur.execute("INSERT INTO meta(key, value) VALUES('schema_version', ?)",
@@ -972,19 +1011,21 @@ class Workspace:
         application.updated_at = now_iso()
         self._conn.execute(
             """INSERT INTO applications (application_id, job_id, status, match_score, created_at,
-               updated_at, sent_at, follow_up_at, interview_at, notes, cv_path, cover_letter_path,
-               email_path, history, prep, prep_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               updated_at, sent_at, follow_up_at, follow_up_count, interview_at, notes, cv_path,
+               cover_letter_path, email_path, history, prep, prep_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(application_id) DO UPDATE SET
                  status=excluded.status, match_score=excluded.match_score,
                  updated_at=excluded.updated_at, sent_at=excluded.sent_at,
-                 follow_up_at=excluded.follow_up_at, interview_at=excluded.interview_at,
+                 follow_up_at=excluded.follow_up_at, follow_up_count=excluded.follow_up_count,
+                 interview_at=excluded.interview_at,
                  notes=excluded.notes,
                  cv_path=excluded.cv_path, cover_letter_path=excluded.cover_letter_path,
                  email_path=excluded.email_path, history=excluded.history,
                  prep=excluded.prep, prep_path=excluded.prep_path""",
             (application.application_id, application.job_id, application.status,
              application.match_score, application.created_at, application.updated_at,
-             application.sent_at, application.follow_up_at, application.interview_at,
+             application.sent_at, application.follow_up_at, application.follow_up_count,
+             application.interview_at,
              application.notes, application.cv_path, application.cover_letter_path,
              application.email_path, json.dumps(application.history),
              json.dumps(application.prep or {}), application.prep_path))
@@ -1002,7 +1043,8 @@ class Workspace:
             cv_path=row["cv_path"] or "", cover_letter_path=row["cover_letter_path"] or "",
             email_path=row["email_path"] or "", history=json.loads(row["history"] or "[]"),
             prep=_json_dict(row["prep"] if "prep" in row.keys() else None),
-            prep_path=(row["prep_path"] if "prep_path" in row.keys() else "") or "")
+            prep_path=(row["prep_path"] if "prep_path" in row.keys() else "") or "",
+            follow_up_count=int(row["follow_up_count"] or 0) if "follow_up_count" in row.keys() else 0)
 
     @synchronized
     def applications(self) -> list[Application]:

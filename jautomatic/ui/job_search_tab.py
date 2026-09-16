@@ -3,9 +3,20 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLineEdit,
-                               QProgressBar, QSpinBox, QSplitter, QTableWidget,
-                               QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLineEdit,
+    QProgressBar,
+    QSpinBox,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..models import JobPosting
 from ..services.application_pipeline import MatchResult, match_job
@@ -18,7 +29,7 @@ class JobSearchTab(QWidget):
     page_title = "Job search"
     page_subtitle = "Pull postings from every enabled board, then prepare applications"
 
-    def __init__(self, ctx) -> None:  # noqa: ANN001 - MainWindow
+    def __init__(self, ctx) -> None:
         super().__init__()
         self.ctx = ctx
         self.outcome = None
@@ -61,8 +72,14 @@ class JobSearchTab(QWidget):
         self.min_salary.setSingleStep(1000)
         self.min_salary.setGroupSeparatorShown(True)
         self.min_salary.setPrefix("min salary ")
+        self.min_match = QSpinBox()
+        self.min_match.setRange(0, 100)
+        self.min_match.setSuffix(" / 100")
+        self.min_match.setToolTip("Hide results below this match score (0 shows everything)")
+        self.min_match.valueChanged.connect(self._on_min_match_changed)
         row_two.addWidget(self.per_source)
         row_two.addWidget(self.min_salary)
+        row_two.addWidget(self.min_match)
         row_two.addWidget(th.label("Sources:", "muted"))
         for name, source in self.ctx.pipeline.scraper.sources.items():
             box = QCheckBox(source.label)
@@ -99,6 +116,21 @@ class JobSearchTab(QWidget):
                                        wrap=True)
         query_card.add(self.progress)
         query_card.add(self.result_summary)
+
+        url_row_sep = th.hline()
+        query_card.add(url_row_sep)
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText(
+            "Or paste a job URL from anywhere (Greenhouse, Workday, LinkedIn, a company site)…")
+        self.url_input.returnPressed.connect(self.import_url)
+        self.import_url_button = th.button(
+            "Track from URL", "primary",
+            "Read the pasted link and add it to your tracker", self.import_url)
+        url_row.addWidget(self.url_input, 1)
+        url_row.addWidget(self.import_url_button)
+        query_card.add_layout(url_row)
         layout.addWidget(query_card)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -128,6 +160,10 @@ class JobSearchTab(QWidget):
                                           lambda: self._prepare_top(3)))
         table_actions.addWidget(th.button("Shortlist", "default", "Mark as shortlisted",
                                           self._shortlist_selected))
+        table_actions.addWidget(th.button("Clear", "default",
+                                          "Archive a posting you can't apply for "
+                                          "(kept in the database/history)",
+                                          self._clear_selected))
         table_actions.addWidget(th.button("Open posting", "ghost", "", self._open_selected))
         table_actions.addStretch(1)
         table_card.add_layout(table_actions)
@@ -170,6 +206,7 @@ class JobSearchTab(QWidget):
         profile = self.ctx.profile
         self.per_source.setValue(settings.results_per_source)
         self.min_salary.setValue(settings.min_salary)
+        self.min_match.setValue(settings.min_match_score)
         self.remote_only.setChecked(settings.remote_only)
         enabled = set(settings.enabled_sources)
         for name, box in self.source_boxes.items():
@@ -184,6 +221,60 @@ class JobSearchTab(QWidget):
     def refresh(self) -> None:
         self.load_defaults()
         self._mark_tracked()
+        if not self.ranked:
+            self._show_tracked()
+
+    def _show_tracked(self) -> None:
+        """Populate the results table from tracked applications (no live search yet)."""
+        rows = [row for row in self.ctx.pipeline.tracker(self.ctx.profile)
+                if row.status.is_active]
+        rows = rows[:400]
+        if not rows:
+            return
+        self.ranked = [(row.job, row.match) for row in rows]
+        self._fill_table()
+        self.result_summary.setText(
+            f"Showing {len(rows)} tracked posting(s) from your queue — run a search for "
+            f"fresh postings.{self._filter_note()}")
+
+    def _on_min_match_changed(self, value: int) -> None:
+        self.ctx.settings.min_match_score = value
+        self.ctx.save_settings(self.ctx.settings)
+        if not self.ranked:
+            self.result_summary.setText(
+                f"Filter: only results scoring ≥ {value}/100 are shown. Run a search."
+                if value else "Filter off — every result is shown. Run a search.")
+            return
+        self._fill_table()
+        if value:
+            self.result_summary.setText(
+                f"Filtered to matches ≥ {value}/100.{self._filter_note()}")
+        else:
+            self.result_summary.setText(f"Filter cleared — showing all results."
+                                        f"{self._filter_note()}")
+
+    def _filter_note(self) -> str:
+        threshold = self.min_match.value()
+        if threshold <= 0 or not self.ranked:
+            return ""
+        shown = sum(1 for _, match in self.ranked if match.score >= threshold)
+        return f" Showing {shown} of {len(self.ranked)} ranked results."
+
+    def _visible_rows(self) -> list[tuple[int, JobPosting, MatchResult]]:
+        threshold = self.min_match.value()
+        filtered = enumerate(self.ranked)
+        if threshold > 0:
+            filtered = ((index, pair) for index, pair in filtered
+                        if pair[1].score >= threshold)
+        rows = [(index, job, match) for index, (job, match) in filtered]
+        return rows[:400]
+
+    def show_result_outcome(self, outcome) -> None:
+        """Render a fetch's postings in the results table (manual or background)."""
+        self.outcome = outcome
+        self.ranked = [(job, match_job(self.ctx.profile, job, self.ctx.settings))
+                       for job in outcome.jobs]
+        self._fill_table()
 
     # ------------------------------------------------------------ search  #
     def start_search(self, import_results: bool) -> None:
@@ -210,14 +301,14 @@ class JobSearchTab(QWidget):
             remote_only=self.remote_only.isChecked(), min_salary=self.min_salary.value(),
             limit_per_source=self.per_source.value())
 
-        def work():  # noqa: ANN202
+        def work():
             cancel = self.ctx.cancel_event.is_set
             outcome = self.ctx.pipeline.scraper.search(query, should_cancel=cancel)
             if cancel():
                 return outcome, []  # closing: skip the import against the workspace
             return outcome, self.ctx.pipeline.import_jobs(outcome.jobs)
 
-        def done(result) -> None:  # noqa: ANN001
+        def done(result) -> None:
             self.progress.setVisible(False)
             self.search_button.setEnabled(True)
             self.search_import_button.setEnabled(True)
@@ -227,6 +318,7 @@ class JobSearchTab(QWidget):
                            for job in outcome.jobs]
             self._fill_table()
             message = outcome.summary() + f" · {len(created)} new in tracker"
+            message += self._filter_note()
             self.result_summary.setText(message)
             level = "warning" if outcome.errors else "success"
             if not outcome.jobs:
@@ -247,18 +339,19 @@ class JobSearchTab(QWidget):
     def import_demo(self) -> None:
         query = self.query.text().strip() or "python"
 
-        def work():  # noqa: ANN202
+        def work():
             return self.ctx.pipeline.search_and_import(query, sources=["sample"],
                                                        limit_per_source=self.per_source.value())
 
-        def done(result) -> None:  # noqa: ANN001
+        def done(result) -> None:
             outcome, created = result
             self.outcome = outcome
             self.ranked = [(job, match_job(self.ctx.profile, job, self.ctx.settings))
                            for job in outcome.jobs]
             self._fill_table()
             self.result_summary.setText(f"Demo data: {len(outcome.jobs)} posting(s), "
-                                        f"{len(created)} new in tracker.")
+                                            f"{len(created)} new in tracker."
+                                            f"{self._filter_note()}")
             self.ctx.notify("Demo postings imported.", "success")
             self.ctx.tabs["dashboard"].refresh()
 
@@ -275,18 +368,60 @@ class JobSearchTab(QWidget):
                         "success")
         self.ctx.tabs["dashboard"].refresh()
 
+    def import_url(self) -> None:
+        url = self.url_input.text().strip()
+        if not url:
+            self.ctx.notify("Paste a job posting URL first.", "warning")
+            return
+        self.import_url_button.setEnabled(False)
+
+        def work():
+            import requests
+
+            from ..services.job_scraper import JobScraper
+            try:
+                return self.ctx.pipeline.import_from_url(url)
+            except requests.exceptions.RequestException as exc:
+                raise ValueError(JobScraper._friendly_error(exc)) from exc
+            except ValueError:
+                raise
+            except Exception as exc:
+                raise ValueError(f"no readable job text on that page ({exc.__class__.__name__})"
+                                 ) from exc
+
+        def done(result) -> None:
+            self.import_url_button.setEnabled(True)
+            application, created = result
+            job = self.ctx.workspace.get_job(application.job_id)
+            if created:
+                self.ctx.notify(f"Tracked “{job.title}” at {job.company} from the pasted link.",
+                                "success")
+            else:
+                self.ctx.notify("That posting is already in your tracker.", "info")
+            self.url_input.clear()
+            self._mark_tracked()
+            self.ctx.tabs["dashboard"].refresh()
+            self.ctx.tabs["applications"].refresh()
+            self.ctx.go_to("applications")
+
+        def failed(message: str) -> None:
+            self.import_url_button.setEnabled(True)
+            self.ctx.notify(f"Could not read that link — {message}", "error")
+
+        self.ctx.run_task("Reading the pasted link", work, done, failed)
+
     # ------------------------------------------------------------- table  #
     def _fill_table(self) -> None:
-        rows = self.ranked[:400]
+        rows = self._visible_rows()
         self.table.setRowCount(len(rows))
         tracked = {app.job_id for app in self.ctx.workspace.applications()}
-        for index, (job, match) in enumerate(rows):
+        for index, (rank_index, job, match) in enumerate(rows):
             is_tracked = job.job_id in tracked
             match_item = QTableWidgetItem(f"{match.score}")
             match_item.setTextAlignment(Qt.AlignCenter)
             match_item.setForeground(QColor(th.ScoreBar.score_color(match.score)))
             match_item.setToolTip(" · ".join(match.reasons) or "no reasons recorded")
-            match_item.setData(Qt.UserRole, index)
+            match_item.setData(Qt.UserRole, rank_index)
             self.table.setItem(index, 0, match_item)
             title_item = QTableWidgetItem(f"✔  {job.title}" if is_tracked else job.title)
             if is_tracked:
@@ -384,7 +519,7 @@ class JobSearchTab(QWidget):
     def _prepare_jobs(self, jobs: list[JobPosting]) -> None:
         profile = self.ctx.profile
 
-        def work():  # noqa: ANN202
+        def work():
             cancel = self.ctx.cancel_event.is_set
             results = []
             for job in jobs:
@@ -394,7 +529,7 @@ class JobSearchTab(QWidget):
                 results.append(self.ctx.pipeline.prepare(application, profile))
             return results
 
-        def done(materials) -> None:  # noqa: ANN001
+        def done(materials) -> None:
             self._mark_tracked()
             self.ctx.notify(f"Materials generated for {len(materials)} posting(s).", "success")
             self.ctx.tabs["dashboard"].refresh()
@@ -419,6 +554,19 @@ class JobSearchTab(QWidget):
         self._mark_tracked()
         self.ctx.notify(f"Shortlisted {job.title} at {job.company}.", "success")
 
+    def _clear_selected(self) -> None:
+        selected = self._selected_job()
+        if not selected:
+            self.ctx.notify("Select a posting first.", "warning")
+            return
+        job, _match = selected
+        application = self.ctx.pipeline.ensure_application(job)
+        self.ctx.pipeline.clear_application(application)
+        self._mark_tracked()
+        self.ctx.notify(f"Cleared {job.title} at {job.company} from the queue.", "success")
+        self.ctx.tabs["dashboard"].refresh()
+        self.ctx.tabs["applications"].refresh()
+
     def _open_selected(self) -> None:
         selected = self._selected_job()
         if not selected:
@@ -439,4 +587,4 @@ class JobSearchTab(QWidget):
         self.ctx.notify("Posting URL copied to the clipboard.", "info")
 
 
-__all__ = ["JobSearchTab", "COLUMNS"]
+__all__ = ["COLUMNS", "JobSearchTab"]

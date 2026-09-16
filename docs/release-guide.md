@@ -76,7 +76,7 @@ To build and verify the MSI locally on a Windows machine:
 packaging\build.ps1
 
 # 2. Acceptance verification (elevated PowerShell prompt):
-packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.1.0-x64.msi
+packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.3.0-x64.msi
 ```
 
 ### Useful Switches

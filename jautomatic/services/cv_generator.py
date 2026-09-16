@@ -28,8 +28,14 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ..models import (JobPosting, Profile, slugify, specific_keywords, tokenize,
-                      unique_document_path)
+from ..models import (
+    JobPosting,
+    Profile,
+    slugify,
+    specific_keywords,
+    tokenize,
+    unique_document_path,
+)
 from . import template_engine
 
 TEMPLATES = ("modern", "classic", "compact", "functional", "executive", "technical")
@@ -83,7 +89,7 @@ def _contact_line(profile: Profile) -> str:
     return line
 
 
-def _skill_line(profile: Profile, job: JobPosting | None, match=None) -> str:  # noqa: ANN001
+def _skill_line(profile: Profile, job: JobPosting | None, match=None) -> str:
     """Skills first, then the posting keywords the profile genuinely covers."""
     skills = [s.strip() for s in profile.skills if s.strip()]
     if job:
@@ -98,7 +104,7 @@ def _skill_line(profile: Profile, job: JobPosting | None, match=None) -> str:  #
     return ", ".join(skills[:26])
 
 
-def _bullets(entry, job: JobPosting | None, limit: int) -> list[str]:  # noqa: ANN001
+def _bullets(entry, job: JobPosting | None, limit: int) -> list[str]:
     """Take the user's bullets; if the job asks for something we can evidence, show it first."""
     bullets = entry.as_bullets()
     if job and bullets:
@@ -125,7 +131,7 @@ def _tailored_summary(profile: Profile, job: JobPosting | None) -> str:
 # --------------------------------------------------------------------------- #
 # templates
 # --------------------------------------------------------------------------- #
-def render_modern(profile: Profile, job: JobPosting | None = None, match=None) -> str:  # noqa: ANN001
+def render_modern(profile: Profile, job: JobPosting | None = None, match=None) -> str:
     lines: list[str] = []
     add = lines.append
 
@@ -175,7 +181,7 @@ def render_modern(profile: Profile, job: JobPosting | None = None, match=None) -
     return "\n".join(lines).strip() + "\n"
 
 
-def render_classic(profile: Profile, job: JobPosting | None = None, match=None) -> str:  # noqa: ANN001
+def render_classic(profile: Profile, job: JobPosting | None = None, match=None) -> str:
     lines: list[str] = []
     add = lines.append
 
@@ -222,7 +228,7 @@ def render_classic(profile: Profile, job: JobPosting | None = None, match=None) 
     return "\n".join(lines).strip() + "\n"
 
 
-def render_compact(profile: Profile, job: JobPosting | None = None, match=None) -> str:  # noqa: ANN001
+def render_compact(profile: Profile, job: JobPosting | None = None, match=None) -> str:
     lines: list[str] = []
     add = lines.append
 
@@ -264,7 +270,7 @@ def render_compact(profile: Profile, job: JobPosting | None = None, match=None) 
     return "\n".join(lines).strip() + "\n"
 
 
-def _entry_stack(entry, job: JobPosting | None, profile: Profile) -> list[str]:  # noqa: ANN001
+def _entry_stack(entry, job: JobPosting | None, profile: Profile) -> list[str]:
     """Technologies evidenced by one role: profile skills / posting tags found in its text."""
     text = " ".join([entry.title, entry.summary, " ".join(entry.highlights)]).lower()
     found = re.findall(r"[a-z0-9+#.]+", text)
@@ -304,7 +310,7 @@ def _impact_bullets(profile: Profile, job: JobPosting | None, limit: int) -> lis
     return sorted(bullets, key=weight)[:limit]
 
 
-def render_functional(profile: Profile, job: JobPosting | None = None, match=None) -> str:  # noqa: ANN001
+def render_functional(profile: Profile, job: JobPosting | None = None, match=None) -> str:
     """Skills-first: evidence grouped by competency, timeline kept short."""
     lines: list[str] = []
     add = lines.append
@@ -372,7 +378,7 @@ def render_functional(profile: Profile, job: JobPosting | None = None, match=Non
     return "\n".join(lines).strip() + "\n"
 
 
-def render_executive(profile: Profile, job: JobPosting | None = None, match=None) -> str:  # noqa: ANN001
+def render_executive(profile: Profile, job: JobPosting | None = None, match=None) -> str:
     """Leadership brief: headline achievements first, then roles with scope."""
     lines: list[str] = []
     add = lines.append
@@ -428,7 +434,7 @@ def render_executive(profile: Profile, job: JobPosting | None = None, match=None
     return "\n".join(lines).strip() + "\n"
 
 
-def render_technical(profile: Profile, job: JobPosting | None = None, match=None) -> str:  # noqa: ANN001
+def render_technical(profile: Profile, job: JobPosting | None = None, match=None) -> str:
     """Engineering layout: stack per role + a keyword-coverage block for the posting."""
     lines: list[str] = []
     add = lines.append
@@ -510,7 +516,7 @@ RENDERERS = {"modern": render_modern, "classic": render_classic, "compact": rend
 # --------------------------------------------------------------------------- #
 # user-supplied templates
 # --------------------------------------------------------------------------- #
-def template_context(profile: Profile, job: JobPosting | None = None, match=None) -> dict:  # noqa: ANN001
+def template_context(profile: Profile, job: JobPosting | None = None, match=None) -> dict:
     """The variables a custom template can read (see ``docs/cv-templates.md``)."""
     experience = []
     for entry in profile.experience:
@@ -687,7 +693,7 @@ class TemplateRegistry:
         return path.read_text("utf-8")
 
     def render(self, template: str, profile: Profile, job: JobPosting | None = None,
-               match=None) -> str:  # noqa: ANN001
+               match=None) -> str:
         """Render a custom template; raises ``TemplateError``/``FileNotFoundError``."""
         return template_engine.render(self.source(template), template_context(profile, job, match))
 
@@ -709,7 +715,7 @@ class TemplateRegistry:
 
 
 def render_markdown(profile: Profile, job: JobPosting | None = None, template: str = "modern",
-                    match=None, registry: TemplateRegistry | None = None) -> str:  # noqa: ANN001
+                    match=None, registry: TemplateRegistry | None = None) -> str:
     """Render ``template`` (built-in name or ``custom:<file>``) to Markdown.
 
     Unknown built-ins fall back to ``modern``; so does a custom template whose
@@ -781,7 +787,7 @@ def _strip_inline(text: str) -> str:
     return re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
 
 
-def _add_rich(paragraph, text: str) -> None:  # noqa: ANN001
+def _add_rich(paragraph, text: str) -> None:
     """Render ``**bold**`` runs inside a paragraph."""
     for part in re.split(r"(\*\*.+?\*\*)", _strip_inline_keep_bold(text)):
         if part.startswith("**") and part.endswith("**") and len(part) > 4:
@@ -861,7 +867,7 @@ class CVGenerator:
     # -- rendering --------------------------------------------------------- #
     def generate(self, profile: Profile, job: JobPosting | None = None, template: str = "modern",
                  output_dir: Path | None = None, fmt: str = "docx",
-                 match=None, *, reuse: str | Path | None = None) -> GeneratedDocument:  # noqa: ANN001
+                 match=None, *, reuse: str | Path | None = None) -> GeneratedDocument:
         template, warning = self.resolve_template(template or "modern")
         markdown = render_markdown(profile, job, template, match, registry=self.registry)
         used = [k for k in (job.tags if job else []) if k]

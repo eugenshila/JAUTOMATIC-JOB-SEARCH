@@ -17,12 +17,25 @@ from __future__ import annotations
 
 import csv
 import re
+from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from ..models import (DEFAULT_FOLLOW_UP_DAYS, Application, ApplicationStatus, JobPosting,
-                      Profile, Workspace, keywords, now_iso, parse_date, today_iso)
+from ..models import (
+    DEFAULT_FOLLOW_UP_DAYS,
+    GENERIC_TERMS,
+    Application,
+    ApplicationStatus,
+    JobPosting,
+    Profile,
+    Workspace,
+    keywords,
+    now_iso,
+    parse_date,
+    source_label,
+    today_iso,
+)
 from .calendar_export import build_calendar, events_for, parse_when
 from .cover_letter import CoverLetterService, MatchContext
 from .cv_generator import CVGenerator, GeneratedDocument
@@ -72,7 +85,7 @@ def _profile_text(profile: Profile) -> str:
     return " ".join(c for c in chunks if c)
 
 
-def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:  # noqa: ANN001
+def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
     """Score how well ``job`` fits ``profile`` (0-100) and explain why."""
     result = MatchResult()
     profile_text = _profile_text(profile)
@@ -165,10 +178,34 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult: 
     return result
 
 
-def rank_jobs(profile: Profile, jobs: list[JobPosting], settings=None) -> list[tuple[JobPosting, MatchResult]]:  # noqa: ANN001
+def rank_jobs(profile: Profile, jobs: list[JobPosting], settings=None) -> list[tuple[JobPosting, MatchResult]]:
     scored = [(job, match_job(profile, job, settings)) for job in jobs]
     scored.sort(key=lambda pair: (-pair[1].score, pair[0].age_days or 999))
     return scored
+
+
+def filter_min_score(ranked: list[tuple[JobPosting, MatchResult]],
+                     floor: int = 0) -> list[tuple[JobPosting, MatchResult]]:
+    """Keep only results at or above ``floor`` (0 or negative = keep everything)."""
+    if not ranked or floor <= 0:
+        return list(ranked)
+    return [(job, match) for job, match in ranked if match.score >= floor]
+
+
+def min_pay_ok(job: JobPosting, floor: int = 0) -> bool:
+    """True when the posting advertises a per-task rate of at least ``floor`` USD.
+
+    Used by the Tasks search: microtask gigs quote per-task rates, so a posting
+    that is not explicitly priced in USD fails the ``$X+`` check rather than
+    silently passing.  A quoted range ("$8-$45") is judged by its lower bound,
+    so ``$10+`` really means the task pays $10 or more.
+    """
+    if not job or floor <= 0:
+        return True
+    if (job.currency or "").upper() != "USD":
+        return False
+    rate = job.salary_min or job.salary_max
+    return bool(rate) and rate >= floor
 
 
 # --------------------------------------------------------------------------- #
@@ -220,7 +257,7 @@ class PreparedMaterials:
 class ApplicationPipeline:
     """Coordinates scraper, matcher, generators and the SQLite workspace."""
 
-    def __init__(self, workspace: Workspace, settings=None) -> None:  # noqa: ANN001
+    def __init__(self, workspace: Workspace, settings=None) -> None:
         self.workspace = workspace
         self.settings = settings or workspace.load_settings()
         self.scraper = JobScraper(self.settings)
@@ -229,7 +266,7 @@ class ApplicationPipeline:
         self.emails = EmailDrafter()
 
     # -- search ------------------------------------------------------------ #
-    def build_query(self, text: str, location: str = "", **overrides) -> SearchQuery:  # noqa: ANN003
+    def build_query(self, text: str, location: str = "", **overrides) -> SearchQuery:
         settings = self.settings
         query = SearchQuery(
             text=text, location=location,
@@ -242,12 +279,12 @@ class ApplicationPipeline:
         return query
 
     def search(self, text: str, location: str = "", should_cancel=None,
-               **overrides) -> SearchOutcome:  # noqa: ANN001, ANN003
+               **overrides) -> SearchOutcome:
         return self.scraper.search(self.build_query(text, location, **overrides),
                                    should_cancel=should_cancel)
 
     def search_and_import(self, text: str, location: str = "", should_cancel=None,
-                          **overrides):  # noqa: ANN001, ANN003, ANN201
+                          **overrides):
         outcome = self.search(text, location, should_cancel=should_cancel, **overrides)
         if should_cancel is not None and should_cancel():
             # Shutdown began mid-search: importing into a workspace that is about
@@ -275,6 +312,23 @@ class ApplicationPipeline:
             return existing
         application = Application(job_id=job.job_id)
         return self.workspace.save_application(application)
+
+    def import_from_url(self, url: str, timeout: int | None = None) -> tuple[Application, bool]:
+        """Track a posting at an arbitrary URL (paste-any-URL importer).
+
+        Returns ``(application, created)``; when the URL was already tracked
+        ``created`` is False and just the posting row is refreshed.
+        """
+        from .job_scraper import (
+            posting_from_url,  # local import: keeps scraper optional
+        )
+
+        timeout = timeout or int(getattr(self.settings, "request_timeout", 15) or 15)
+        job = posting_from_url(url, timeout=timeout)
+        fingerprint = job.fingerprint
+        already = any(stored.fingerprint == fingerprint for stored in self.workspace.jobs())
+        application = self.ensure_application(job)
+        return application, not already
 
     # -- tracking ---------------------------------------------------------- #
     def tracker(self, profile: Profile | None = None,
@@ -313,12 +367,48 @@ class ApplicationPipeline:
         record.set_status(new_status, note)
         if new_status is ApplicationStatus.SENT and not record.follow_up_at:
             record.schedule_follow_up(self.settings.follow_up_days or DEFAULT_FOLLOW_UP_DAYS)
+        elif new_status.is_closed or new_status in (ApplicationStatus.INTERVIEW,
+                                                    ApplicationStatus.OFFER):
+            # The ladder is over the moment the story moves forward (or ends):
+            # no more nudges for a role that reached interview, offer or the bin.
+            if record.follow_up_at:
+                record.follow_up_at = ""
+                record.follow_up_count = 0
+                record.log("follow-up cancelled", f"reached {new_status.label.lower()}")
         return self.workspace.save_application(record)
 
     def update_notes(self, application: Application, notes: str) -> Application:
         application.notes = notes
         application.log("note edited")
         return self.workspace.save_application(application)
+
+    def clear_application(self, application: Application | str,
+                          note: str = "cleared — cannot apply") -> Application:
+        """Archive a job you can't apply for, keeping it in the database/history."""
+        return self.set_status(application, ApplicationStatus.ARCHIVED, note)
+
+    def auto_clear_unacted(self, profile: Profile | None = None,
+                           days: int | None = None) -> int:
+        """Archive untouched applications whose tracking date is older than ``days``.
+
+        ``days`` comes from ``settings.auto_clear_days`` unless overridden; ``0``
+        (or a false value stored in old settings) disables the sweep entirely.
+        """
+        days = int(days if days is not None else self.settings.auto_clear_days or 0)
+        if days <= 0:
+            return 0
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        moved = 0
+        for app in self.workspace.applications():
+            if not app.is_unacted:
+                continue
+            created = parse_date(app.created_at)
+            if created is None or created > parse_date(cutoff):
+                continue
+            self.set_status(app, ApplicationStatus.ARCHIVED,
+                            f"auto-cleared after {days} day(s) without action")
+            moved += 1
+        return moved
 
     # -- materials --------------------------------------------------------- #
     def prepare(self, application: Application | str, profile: Profile | None = None,
@@ -355,9 +445,16 @@ class ApplicationPipeline:
 
         attachment_names = [materials.cv.filename] if materials.cv.path else []
         if with_cover_letter:
+            llm = None
+            if settings.llm_provider == "ollama":
+                llm = {"base_url": settings.llm_base_url or "http://localhost:11434",
+                       "model": settings.llm_model or "llama3.2",
+                       "timeout": settings.llm_timeout}
             materials.cover_letter = self.cover_letters.generate(
                 profile, job, match.as_context(), tone, out_dir, fmt,
-                reuse=record.cover_letter_path or None)
+                reuse=record.cover_letter_path or None, llm=llm)
+            if materials.cover_letter.warning:
+                record.log("cover letter fallback", materials.cover_letter.warning)
             record.cover_letter_path = (str(materials.cover_letter.path)
                                         if materials.cover_letter.path else "")
             if materials.cover_letter.path:
@@ -383,7 +480,7 @@ class ApplicationPipeline:
         return materials
 
     def prepare_batch(self, rows: list[TrackedApplication], profile: Profile | None = None,
-                      should_cancel=None, **kwargs) -> list[PreparedMaterials]:  # noqa: ANN001, ANN003
+                      should_cancel=None, **kwargs) -> list[PreparedMaterials]:
         out: list[PreparedMaterials] = []
         for row in rows:
             if should_cancel is not None and should_cancel():
@@ -395,7 +492,7 @@ class ApplicationPipeline:
         return out
 
     def autopilot(self, profile: Profile | None = None, limit: int | None = None,
-                  should_cancel=None) -> list[PreparedMaterials]:  # noqa: ANN001
+                  should_cancel=None) -> list[PreparedMaterials]:
         """Prepare materials for the best untouched matches (opt-in in Settings)."""
         profile = profile or self.workspace.load_profile()
         threshold = self.settings.autopilot_min_score
@@ -417,6 +514,12 @@ class ApplicationPipeline:
 
     def draft_follow_up(self, application: Application | str,
                         fmt: str | None = None) -> tuple[Path, str]:
+        """Draft the *next* rung of the follow-up ladder (escalating tone).
+
+        Drafting advances the ladder: the next nudge is scheduled after
+        ``follow_up_repeat_days`` (or, once ``follow_up_max_nudges`` was
+        reached, the series ends and the application stops being "due").
+        """
         record = (self.workspace.get_application(application)
                   if isinstance(application, str) else application)
         if record is None:
@@ -425,12 +528,27 @@ class ApplicationPipeline:
         if job is None:
             raise KeyError(f"job {record.job_id} is not in the workspace")
         profile = self.workspace.load_profile()
+        level = record.follow_up_count
+        max_nudges = max(0, int(self.settings.follow_up_max_nudges or 0))
         days = record.days_since_sent or self.settings.follow_up_days or DEFAULT_FOLLOW_UP_DAYS
         stage = "interview" if record.status_enum is ApplicationStatus.INTERVIEW else "sent"
-        draft = render_follow_up(profile, job, days, stage)
+        draft = render_follow_up(profile, job, days, stage, level, max_nudges)
         document = self.emails.follow_up(profile, job, days, stage,
-                                         self.workspace.documents_dir, fmt or self.settings.export_format)
-        record.log("follow-up drafted", draft.subject)
+                                         output_dir=self.workspace.documents_dir,
+                                         fmt=fmt or self.settings.export_format,
+                                         level=level, max_nudges=max_nudges)
+
+        rung = level + 1
+        record.follow_up_count = rung
+        final = bool(max_nudges) and rung >= max_nudges
+        if final:
+            record.follow_up_at = ""
+            record.log("follow-up series complete", f"nudge #{rung} of {max_nudges} drafted")
+        else:
+            repeat = max(1, int(self.settings.follow_up_repeat_days
+                                or self.settings.follow_up_days or 5))
+            record.schedule_follow_up(repeat)
+            record.log("follow-up drafted", f"nudge #{rung} of the ladder - next in {repeat} day(s)")
         self.workspace.save_application(record)
         return document.path, draft.text
 
@@ -571,6 +689,116 @@ class ApplicationPipeline:
         upcoming.sort(key=lambda r: r.application.follow_up_at)
         stats["next_follow_up"] = upcoming[0] if upcoming else None
         return stats
+
+    # -- analytics -------------------------------------------------------- #
+    @staticmethod
+    def _response_event(app: Application) -> tuple[date | None, ApplicationStatus | None]:
+        """Earliest history event that moved the application to interview/offer/rejected."""
+        stop = (ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER, ApplicationStatus.REJECTED)
+        for event in app.history:
+            if event.get("event") == "status" and event.get("to") in (s.value for s in stop):
+                when = parse_date(event.get("at"))
+                if when:
+                    return when, ApplicationStatus(event["to"])
+        return None, None
+
+    def analytics(self, profile: Profile | None = None) -> dict:
+        """Trend/funnel numbers for the Insights tab (GUI-free, SQLite-backed).
+
+        Returns pipeline counts, a conversion funnel, a weekly series (created /
+        sent / responded) for the last 8 ISO weeks, score buckets, response-time
+        stats and per-source counts.
+        """
+        rows = self.tracker(profile)
+        apps = self.workspace.applications()
+        base = self.workspace.stats()
+
+        response_days: list[tuple[str, str, int, str]] = []
+        responded_by_week: Counter[str] = Counter()
+        sent_by_week: Counter[str] = Counter()
+        created_by_week: Counter[str] = Counter()
+        for app in apps:
+            created = parse_date(app.created_at)
+            if created:
+                created_by_week[created.isocalendar()[:2]] += 1
+            sent = parse_date(app.sent_at)
+            if sent:
+                sent_by_week[sent.isocalendar()[:2]] += 1
+            reply, status = self._response_event(app)
+            if reply:
+                responded_by_week[reply.isocalendar()[:2]] += 1
+                days = (reply - sent).days if sent else None
+                if days is not None:
+                    job = self.workspace.get_job(app.job_id)
+                    response_days.append((job.title if job else "?", job.company if job else "?",
+                                          days, status.label if status else ""))
+
+        now = date.today()
+        series: list[dict] = []
+        for offset in range(7, -1, -1):
+            week_date = now - timedelta(weeks=offset)
+            key = week_date.isocalendar()[:2]
+            monday = date.fromisocalendar(*key, 1)
+            series.append({
+                "week": monday.strftime("%d %b"),
+                "created": created_by_week.get(key, 0),
+                "sent": sent_by_week.get(key, 0),
+                "responded": responded_by_week.get(key, 0),
+            })
+
+        intervals = [(-1, 50, "weak <50"), (50, 65, "50-64"), (65, 80, "65-79"), (80, 101, "80-100")]
+        buckets = [{"label": label, "count": sum(1 for r in rows if max(0, lo) <= r.score < hi)}
+                   for lo, hi, label in intervals]
+
+        days_only = sorted(d for _, _, d, _ in response_days)
+        avg_reply = (round(sum(days_only) / len(days_only), 1) if days_only else None)
+        median = days_only[len(days_only) // 2] if days_only else None
+
+        by_source = Counter(job.source for job in self.workspace.jobs())
+        return {
+            "statuses": [{"key": s.value, "label": s.label, "count": base["by_status"][s.value]}
+                         for s in ApplicationStatus.ordered()],
+            "funnel": [
+                {"label": "Tracked", "value": base["applications"]},
+                {"label": "Sent", "value": base["sent"]},
+                {"label": "Interview", "value": base["interviews"]},
+                {"label": "Offer", "value": base["offers"]},
+            ],
+            "rates": {
+                "response": base["response_rate"],
+                "interview": base["interview_rate"],
+                "offer": round(100 * base["offers"] / base["sent"], 1) if base["sent"] else 0.0,
+                "avg_reply_days": avg_reply,
+                "median_reply_days": median,
+            },
+            "weekly": series,
+            "score_buckets": buckets,
+            "response_times": sorted(response_days, key=lambda t: t[2])[:25],
+            "by_source": [{"source": source_label(s), "count": c} for s, c in
+                          by_source.most_common()],
+        }
+
+    def market_intelligence(self, profile: Profile | None = None,
+                            limit: int = 50) -> list[dict]:
+        """Which skill tags the market actually asks for, across stored postings.
+
+        Each item: tag, how many postings advertise it, whether the candidate's
+        profile already covers it, and up to three sample titles.
+        """
+        profile = profile or self.workspace.load_profile()
+        profile_terms = set(keywords(_profile_text(profile), limit=600))
+        counts: Counter[str] = Counter()
+        titles: dict[str, set[str]] = {}
+        for job in self.workspace.jobs():
+            for tag in job.tags:
+                term = str(tag).strip().lower()
+                if not term or term in GENERIC_TERMS or len(term) < 3 or term.isdigit():
+                    continue
+                counts[term] += 1
+                titles.setdefault(term, set()).add(job.title.strip()[:42])
+        return [{"tag": term, "count": counts[term], "have": term in profile_terms,
+                 "titles": sorted(titles[term])[:3]}
+                for term, _ in counts.most_common(limit)]
 
 
 __all__ = ["ApplicationPipeline", "MatchResult", "PreparedMaterials", "TrackedApplication",

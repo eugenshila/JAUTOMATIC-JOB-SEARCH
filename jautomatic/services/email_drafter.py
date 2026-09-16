@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..models import JobPosting, Profile, human_join, pretty_term, slugify, unique_document_path
+from ..models import (
+    JobPosting,
+    Profile,
+    human_join,
+    pretty_term,
+    slugify,
+    unique_document_path,
+)
 from .cover_letter import MatchContext
 from .cv_generator import GeneratedDocument, document_suffix, export
 
@@ -150,27 +157,74 @@ def render_email(profile: Profile, job: JobPosting, match: MatchContext | None =
     return draft
 
 
-def render_follow_up(profile: Profile, job: JobPosting, days_since_sent: int = 7,
-                     stage: str = "sent") -> EmailDraft:
-    """Polite nudge used by the follow-up reminders."""
-    subject = f"Following up: {job.title} application"
-    if profile.full_name.strip():
-        subject += f" ({profile.full_name.strip()})"
+# Each rung of the escalating follow-up ladder: a subject template and the body
+# paragraphs that make that particular nudge feel like a step forward rather
+# than a copy of the last one.  ``level`` is how many nudges already went out.
+FOLLOW_UP_SUBJECTS = [
+    lambda role, name: (f"Following up: {role} application"
+                        + (f" ({name})" if name else "")),              # first nudge
+    lambda role, name: (f"Still interested: {role}"
+                        + (f" ({name})" if name else "")),              # second nudge
+    lambda role, name: (f"One last check on {role}"
+                        + (f" ({name})" if name else "")),              # third+
+]
+
+
+def _follow_up_body(profile: Profile, job: JobPosting, days_since_sent: int,
+                    stage: str, level: int, final: bool) -> str:
     greeting = f"Dear {job.company.strip() or 'Hiring Team'} Hiring Team,"
-    body = [
-        greeting,
-        f"I applied for the {job.title} role {days_since_sent} days ago and wanted to check in "
-        f"on where things stand. I remain very interested in the position.",
-        "If it helps, I am happy to provide additional work samples, references or a short "
-        "technical conversation at your convenience.",
-        "Thanks for your time — I appreciate any update you can share.",
-        f"Best regards,\n{profile.signature_block().strip() or profile.display_name}",
-    ]
+    role, company = job.title, job.company
+    if level == 0:
+        body = [
+            greeting,
+            f"I applied for the {role} role {days_since_sent} days ago and wanted to check in "
+            f"on where things stand. I remain very interested in the position.",
+            "If it helps, I am happy to provide additional work samples, references or a short "
+            "technical conversation at your convenience.",
+            "Thanks for your time — I appreciate any update you can share.",
+        ]
+    elif level == 1:
+        body = [
+            greeting,
+            f"I wrote to you a little while ago about the {role} role at {company} and haven't "
+            f"heard back, so I wanted to make sure my application didn't slip through the cracks.",
+            "I am as interested now as on day one — happy to supply anything at all that would "
+            "help you decide, from samples of my work to a quick call with the team.",
+            "Either way, a two-line update would be genuinely appreciated.",
+        ]
+    else:
+        body = [
+            greeting,
+            f"This is my last follow-up about the {role} position at {company} — I don't want "
+            f"to keep nudging your inbox, only to close the loop on my application.",
+            "If the role has been filled or is no longer moving forward, a one-line note to "
+            "that effect is more than enough. If it is still open, I'd be glad to have that "
+            "conversation any time.",
+            "Thank you for your help either way.",
+        ]
     if stage == "interview":
         body.insert(2, "Thank you again for the interview — I enjoyed the conversation and it "
                        "only increased my interest in the team.")
-    return EmailDraft(subject=subject, body="\n\n".join(body), recipient=guess_recipient(job),
-                      attachments=[], tone="professional")
+    body.append(f"Best regards,\n{profile.signature_block().strip() or profile.display_name}")
+    return "\n\n".join(body)
+
+
+def render_follow_up(profile: Profile, job: JobPosting, days_since_sent: int = 7,
+                     stage: str = "sent", level: int = 0,
+                     max_nudges: int = 0) -> EmailDraft:
+    """Polite nudge used by the follow-up reminders; ``level`` picks the tone.
+
+    ``level`` is the number of nudges already sent for this application: 0 is the
+    gentle first check-in, 1 a firmer "did it slip through the cracks?", 2+ the
+    final "closing the loop" message (unless ``max_nudges`` says 2 is not final).
+    """
+    role = job.title.strip() or "the advertised role"
+    name = profile.full_name.strip()
+    subject = FOLLOW_UP_SUBJECTS[min(level, len(FOLLOW_UP_SUBJECTS) - 1)](role, name)
+    final = bool(max_nudges) and level >= max_nudges - 1
+    return EmailDraft(subject=subject,
+                      body=_follow_up_body(profile, job, days_since_sent, stage, level, final),
+                      recipient=guess_recipient(job), attachments=[], tone="professional")
 
 
 class EmailDrafter:
@@ -196,19 +250,29 @@ class EmailDrafter:
 
     def follow_up(self, profile: Profile, job: JobPosting, days_since_sent: int = 7,
                   stage: str = "sent", output_dir: Path | None = None,
-                  fmt: str = "docx") -> GeneratedDocument:
-        draft = render_follow_up(profile, job, days_since_sent, stage)
+                  fmt: str = "docx", *, level: int = 0,
+                  max_nudges: int = 0) -> GeneratedDocument:
+        draft = render_follow_up(profile, job, days_since_sent, stage, level, max_nudges)
         document = GeneratedDocument(kind="follow_up", text=draft.to_markdown(),
-                                     template="follow-up-email")
+                                     template=f"follow-up-email-{level}")
         if output_dir is not None:
-            stem = (f"FollowUp_{slugify(profile.display_name, 20)}_{slugify(job.company, 16)}_"
+            step = level + 1
+            stem = (f"FollowUp{step}_{slugify(profile.display_name, 20)}_{slugify(job.company, 16)}_"
                     f"{date.today().isoformat()}")
-            key = f"follow_up|{profile.display_name}|{job.company}|{job.title}|{date.today().isoformat()}"
+            key = (f"follow_up|{level}|{profile.display_name}|{job.company}|{job.title}"
+                   f"|{date.today().isoformat()}")
             path = unique_document_path(output_dir, stem, document_suffix(fmt), key=key)
             document.path = export(draft.to_markdown(), path, fmt,
                                    title=draft.subject)
         return document
 
 
-__all__ = ["EmailDrafter", "EmailDraft", "build_subject", "guess_recipient", "render_email",
-           "render_follow_up"]
+__all__ = [
+    "FOLLOW_UP_SUBJECTS",
+    "EmailDraft",
+    "EmailDrafter",
+    "build_subject",
+    "guess_recipient",
+    "render_email",
+    "render_follow_up",
+]

@@ -13,28 +13,55 @@ import threading
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-                               QPushButton, QSizePolicy, QStackedWidget, QStatusBar, QVBoxLayout,
-                               QWidget)
+from PySide6.QtCore import (
+    QByteArray,
+    QObject,
+    QRectF,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QStackedWidget,
+    QStatusBar,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import APP_TITLE, __version__
 from ..models import AppSettings, Profile, Workspace
 from ..services.application_pipeline import ApplicationPipeline
 from . import theme as th
+from .analytics_tab import AnalyticsTab
 from .applications_tab import ApplicationsTab
 from .dashboard_tab import DashboardTab
 from .interview_prep_dialog import InterviewPrepDialog
 from .job_search_tab import JobSearchTab
 from .profile_tab import ProfileTab
 from .settings_tab import SettingsTab
+from .tasks_tab import TasksTab
 
 NAV_ITEMS = [
     ("dashboard", "Dashboard", "Overview of your search"),
     ("profile", "Profile", "Who you are, what you want"),
     ("search", "Job search", "Find and score openings"),
+    ("tasks", "Tasks", "Microtasks & gigs with a minimum-pay filter"),
     ("applications", "Applications", "Materials, tracking, follow-ups"),
+    ("insights", "Insights", "Trends, response times, market demand"),
     ("settings", "Settings", "Sources, documents, data"),
 ]
 
@@ -55,14 +82,14 @@ class Worker(QRunnable):
     """
 
     def __init__(self, fn, *args, cancel: threading.Event | None = None,
-                 **kwargs) -> None:  # noqa: ANN001, ANN003
+                 **kwargs) -> None:
         super().__init__()
         self.fn, self.args, self.kwargs = fn, args, kwargs
         self.cancel = cancel
         self.signals = WorkerSignals()
 
     @Slot()
-    def run(self) -> None:  # noqa: D102
+    def run(self) -> None:
         if self.cancel is not None and self.cancel.is_set():
             return  # refused: the app is closing (no signals — nobody is listening)
         try:
@@ -92,9 +119,22 @@ class MainWindow(QMainWindow):
         self._header_actions: dict[str, list[QWidget]] = {}
         self._previews: list[QWidget] = []
         self._workers: set[Worker] = set()
+        # Audit trail for background notifications (also the test hook: the
+        # tray is unavailable under offscreen, so alerts land here and in the
+        # in-app toast instead).
+        self._background_notes: list[str] = []
+        self._tray: QSystemTrayIcon | None = None
         # Set once, in closeEvent: refuses new tasks, aborts queued workers and
         # tells long-running loops (search, batch prepare) to wind down early.
         self.cancel_event = threading.Event()
+
+        # Apply the saved theme BEFORE the UI is built: tabs bake concrete
+        # colors from current_theme() at construction time (stat cards, hlines,
+        # empty-state icons), so the palette must already be active here or a
+        # non-default theme silently keeps the default palette's accents.
+        app = QApplication.instance()
+        if app is not None:
+            th.apply_theme(app, self.settings.theme or th.DEFAULT_THEME)
 
         self.setWindowTitle(f"{APP_TITLE} {__version__}")
         self.resize(1440, 900)
@@ -102,7 +142,13 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._wire_shortcuts()
         self._restore_geometry()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setTimerType(Qt.CoarseTimer)
+        self._refresh_timer.timeout.connect(self.background_refresh)
+        self._apply_auto_refresh()
         self.go_to("dashboard")
+        self._run_startup_maintenance()
+        self._setup_tray()
 
     # ------------------------------------------------------------------ UI #
     def _build_ui(self) -> None:
@@ -124,7 +170,9 @@ class MainWindow(QMainWindow):
             "dashboard": DashboardTab(self),
             "profile": ProfileTab(self),
             "search": JobSearchTab(self),
+            "tasks": TasksTab(self),
             "applications": ApplicationsTab(self),
+            "insights": AnalyticsTab(self),
             "settings": SettingsTab(self),
         }
         for key, _, _ in NAV_ITEMS:
@@ -248,7 +296,7 @@ class MainWindow(QMainWindow):
         self.update_meta()
 
     def run_task(self, description: str, fn, on_done=None, on_error=None, *args,
-                 **kwargs) -> Worker | None:  # noqa: ANN001, ANN003, ANN201
+                 **kwargs) -> Worker | None:
         """Run ``fn`` in the background; callbacks fire on the GUI thread.
 
         The worker is kept in ``self._workers`` for the duration of the task: PySide6
@@ -269,7 +317,7 @@ class MainWindow(QMainWindow):
         def forget() -> None:
             self._workers.discard(worker)
 
-        def finish(result) -> None:  # noqa: ANN001
+        def finish(result) -> None:
             forget()
             if self._closing:
                 # Shutdown in progress: the workspace may already be closed and
@@ -358,6 +406,141 @@ class MainWindow(QMainWindow):
         self.workspace.save_settings(settings)
         self.pipeline.settings = settings
         self.pipeline.scraper.settings = settings
+        self._apply_auto_refresh()
+
+    # ------------------------------------------- background refresh / tray  #
+    def _apply_auto_refresh(self) -> None:
+        timer = getattr(self, "_refresh_timer", None)
+        if timer is None:
+            return
+        timer.stop()
+        if self._closing or not self.settings.auto_refresh_enabled:
+            return
+        minutes = max(1, self.settings.auto_refresh_minutes)
+        timer.setInterval(minutes * 60_000)
+        timer.start()
+
+    def _setup_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(self._tray_icon(), self)
+        tray.setToolTip(f"{APP_TITLE} {__version__}")
+        menu = QMenu(self)
+        menu.addAction("Open JAUTOMATIC", self._show_from_tray)
+        menu.addAction("Refresh job boards now", self.background_refresh)
+        menu.addSeparator()
+        menu.addAction("Quit", self.close)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._tray_activated)
+        tray.show()
+        self._tray = tray
+
+    def _tray_icon(self) -> QIcon:
+        palette = th.current_theme()
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor(palette["accent"]))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(4, 4, 56, 56, 14, 14)
+        painter.setPen(QColor(palette["bg"]))
+        font = painter.font()
+        font.setPixelSize(34)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(QRectF(0, 0, 64, 64), Qt.AlignCenter, "J")
+        painter.end()
+        return QIcon(pixmap)
+
+    def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        if self._closing:
+            return
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _run_startup_maintenance(self) -> None:
+        """Archive untouched applications older than settings.auto_clear_days."""
+        if self._closing:
+            return
+        try:
+            cleared = self.pipeline.auto_clear_unacted(self.profile)
+        except Exception as exc:  # noqa: BLE001 - housekeeping must never block startup
+            self.notify(f"Auto-clear failed: {exc}", "warning")
+            return
+        if cleared:
+            self.notify(f"Archived {cleared} untouched application(s) older than "
+                        f"{self.settings.auto_clear_days} day(s).", "info")
+        self.update_meta()
+
+    def background_refresh(self) -> None:
+        """Re-scrape the enabled boards without touching the tracker.
+
+        Used by the auto-refresh timer and the tray action.  Runs in the
+        background like any other task; never imports automatically, never
+        generates documents — it only updates the Search tab's results and
+        raises a desktop notification when genuinely fresh roles showed up.
+        """
+        if self._closing or self._busy:
+            return
+        profile = self.profile
+        settings = self.settings
+        query = settings.last_search_query or (
+            profile.desired_titles[0] if profile.desired_titles else "python")
+        location = profile.desired_locations[0] if profile.desired_locations else ""
+        job_query = self.pipeline.build_query(
+            query, location, sources=settings.enabled_sources,
+            remote_only=settings.remote_only, min_salary=settings.min_salary,
+            limit_per_source=settings.results_per_source)
+
+        def work():
+            cleared = self.pipeline.auto_clear_unacted(profile)
+            outcome = self.pipeline.scraper.search(job_query,
+                                                   should_cancel=self.cancel_event.is_set)
+            return outcome, cleared
+
+        def done(result) -> None:
+            outcome, cleared = result
+            if cleared:
+                self.notify(f"Auto-cleared {cleared} untouched application(s) older than "
+                            f"{settings.auto_clear_days} day(s).", "info")
+            search_tab = self.tabs.get("search")
+            if search_tab is not None and hasattr(search_tab, "show_result_outcome"):
+                search_tab.show_result_outcome(outcome)
+            known = {job.fingerprint for job in self.workspace.jobs()}
+            fresh = [job for job in outcome.jobs if job.fingerprint not in known]
+            self._background_notes.append(
+                f"{len(outcome.jobs)} posting(s), {len(fresh)} new, "
+                f"{len(outcome.errors)} source error(s)")
+            self.notify(f"Refresh: {len(outcome.jobs)} postings · "
+                        f"{len(fresh)} new · {len(outcome.errors)} errors.",
+                        "warning" if outcome.errors else "info")
+            self.set_status(
+                f"Background refresh: {len(outcome.jobs)} postings, "
+                f"{len(fresh)} new since last time.")
+            if fresh and settings.notify_new_matches:
+                self._notify_background("New roles found",
+                                        f"{len(fresh)} fresh posting(s) matched your search.")
+            elif outcome.errors and settings.notify_new_matches:
+                first = len(outcome.errors) == 1
+                self._notify_background(
+                    "Refresh had issues",
+                    f"{len(outcome.errors)} source(s) did not answer"
+                    + (f": {outcome.errors[0]}" if first else "."))
+            if hasattr(self.tabs.get("dashboard"), "refresh"):
+                self.tabs["dashboard"].refresh()
+
+        self.run_task("Refreshing job boards", work, done)
+
+    def _notify_background(self, title: str, message: str) -> None:
+        self._background_notes.append(f"{title}: {message}")
+        if self._tray is not None:
+            self._tray.showMessage(title, message, QSystemTrayIcon.Information, 8000)
 
     def apply_theme(self, name: str) -> None:
         app = QApplication.instance()
@@ -394,7 +577,7 @@ class MainWindow(QMainWindow):
         dialog.activateWindow()
         return dialog
 
-    def open_interview_prep(self, row) -> QWidget:  # noqa: ANN001 - TrackedApplication
+    def open_interview_prep(self, row) -> QWidget:
         """Open (or raise) the interview-prep window for one application."""
         for dialog in self._previews:
             if getattr(dialog, "application_id", None) == row.application.application_id:
@@ -434,7 +617,11 @@ class MainWindow(QMainWindow):
         except OSError:
             pass  # window placement is cosmetic — never let it break a quit
 
-    def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+    def closeEvent(self, event) -> None:
+        self._refresh_timer.stop()
+        if self._tray is not None:
+            self._tray.hide()
+            self._tray = None
         self._save_geometry()
         self._closing = True
         # Cooperative shutdown, no deadline: flag closing, drop queued work,
@@ -453,4 +640,4 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-__all__ = ["MainWindow", "Worker", "WorkerSignals", "NAV_ITEMS"]
+__all__ = ["NAV_ITEMS", "MainWindow", "Worker", "WorkerSignals"]

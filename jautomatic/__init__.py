@@ -10,7 +10,7 @@ Package layout::
     jautomatic.services.application_pipeline  matching, preparation, tracking
     jautomatic.ui                           PySide6 desktop interface
 """
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 APP_TITLE = "JAUTOMATIC JOB SEARCH"
 
-__all__ = ["__version__", "APP_TITLE"]
+__all__ = ["APP_TITLE", "__version__"]

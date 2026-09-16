@@ -129,7 +129,7 @@ def _apply(frame, action, dry_run: bool) -> str:
 def run_assisted(url: str, profile, application=None, overrides: dict | None = None,
                  data_dir: str | None = None, dry_run: bool = False) -> int:
     """Open the form, fill the plan, highlight, and stop for your review."""
-    from jautomatic.services.autofill import parse_html, ProfileAnswers, build_plan
+    from jautomatic.services.autofill import ProfileAnswers, build_plan, parse_html
 
     playwright, profile_dir = _persistent_context(data_dir)
     print("Opening a browser window with your persistent profile.\n"

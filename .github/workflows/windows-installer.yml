@@ -123,11 +123,21 @@ jobs:
           packaging\verify-install.ps1 -MsiPath dist\*.msi *>&1 | Tee-Object -FilePath verify-install.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Screenshot QA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:PYTHONUTF8 = "1"
+          .\.venv\Scripts\python.exe tools\screenshot.py --out artifacts\screenshots --extra *>&1 |
+            Tee-Object -FilePath screenshot-qa.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Expose build diagnostics
         if: failure()
         shell: pwsh
         run: |
-          $logs = @("build-freeze.log", "build-package.log", "verify-install.log")
+          $logs = @("build-freeze.log", "build-package.log", "verify-install.log", "screenshot-qa.log")
           $reported = 0
           $existing = @($logs | Where-Object { Test-Path $_ })
           foreach ($log in $existing) {
@@ -162,6 +172,14 @@ jobs:
           name: JAUTOMATIC-Setup-x64
           path: dist\*.msi
 
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: artifacts\screenshots\*.png
+          if-no-files-found: ignore
+
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -171,6 +189,7 @@ jobs:
             build-freeze.log
             build-package.log
             verify-install.log
+            screenshot-qa.log
             build/logs/*.log
           if-no-files-found: ignore
 

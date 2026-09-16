@@ -5,9 +5,21 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLineEdit,
-                               QPlainTextEdit, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTextBrowser,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLineEdit,
+    QPlainTextEdit,
+    QSpinBox,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..models import ApplicationStatus
 from ..services.application_pipeline import TrackedApplication
@@ -20,7 +32,7 @@ class ApplicationsTab(QWidget):
     page_title = "Applications"
     page_subtitle = "Every tracked posting, its documents and the next action"
 
-    def __init__(self, ctx) -> None:  # noqa: ANN001 - MainWindow
+    def __init__(self, ctx) -> None:
         super().__init__()
         self.ctx = ctx
         self.rows: list[TrackedApplication] = []
@@ -153,7 +165,10 @@ class ApplicationsTab(QWidget):
         detail_card.add_layout(follow_up)
 
         danger = QHBoxLayout()
-        danger.addWidget(th.button("Delete application", "danger", "Remove from the tracker",
+        danger.addWidget(th.button("Clear (can't apply)", "default",
+                                   "Archive this application — it leaves the active queue "
+                                   "but stays in the database/history", self._clear))
+        danger.addWidget(th.button("Delete permanently", "danger", "Remove from the tracker",
                                    self._delete))
         danger.addStretch(1)
         detail_card.add_layout(danger)
@@ -236,7 +251,10 @@ class ApplicationsTab(QWidget):
             follow = app.follow_up_at[:10] if app.follow_up_at else "—"
             if app.follow_up_due:
                 follow += "  ⚠"
-            self.table.setItem(index, 4, QTableWidgetItem(follow))
+            follow_item = QTableWidgetItem(follow)
+            follow_item.setToolTip(f"{app.rung_label(self.ctx.settings.follow_up_max_nudges)} "
+                                   f"follow-up" if app.follow_up_at else "")
+            self.table.setItem(index, 4, follow_item)
             self.table.setItem(index, 5, QTableWidgetItem(app.interview_at[:10] or "—"))
             documents = sum(1 for _, path in app.documents if path and Path(path).exists())
             self.table.setItem(index, 6, QTableWidgetItem(f"{documents}/3"))
@@ -348,10 +366,10 @@ class ApplicationsTab(QWidget):
         if row is None:
             return
 
-        def work():  # noqa: ANN202
+        def work():
             return self.ctx.pipeline.prepare(row.application, self.ctx.profile)
 
-        def done(materials) -> None:  # noqa: ANN001
+        def done(materials) -> None:
             self.refresh()
             if materials.cv and materials.cv.warning:
                 self.ctx.notify(materials.cv.warning, "warning")
@@ -387,7 +405,7 @@ class ApplicationsTab(QWidget):
         if row is None:
             return
 
-        def done(result) -> None:  # noqa: ANN001
+        def done(result) -> None:
             path, text = result
             self.refresh()
             self.ctx.notify("Follow-up e-mail drafted.", "success")
@@ -425,17 +443,30 @@ class ApplicationsTab(QWidget):
         row = self._current()
         if row is None:
             return
-        if not self.ctx.confirm("Delete application",
-                                f"Remove “{row.title}” at {row.company} from the tracker? "
-                                "Generated documents stay on disk.", danger=True):
+        if not self.ctx.confirm("Delete permanently",
+                                f"Remove “{row.title}” at {row.company} from the tracker "
+                                "for good? Generated documents stay on disk.", danger=True):
             return
         self.ctx.workspace.delete_application(row.application.application_id)
         self.ctx.notify("Application removed.", "info")
         self.refresh()
         self.ctx.update_meta()
 
+    def _clear(self) -> None:
+        row = self._current()
+        if row is None:
+            return
+        if row.status in (ApplicationStatus.ARCHIVED,):
+            self.ctx.notify("This application is already archived.", "info")
+            return
+        self.ctx.pipeline.clear_application(row.application)
+        self.ctx.notify(f"{row.title} cleared from the queue.", "success")
+        self.refresh()
+        self.ctx.tabs["dashboard"].refresh()
+        self.ctx.update_meta()
+
     def _recompute(self) -> None:
-        def done(updated) -> None:  # noqa: ANN001
+        def done(updated) -> None:
             self.refresh()
             self.ctx.notify(f"Re-scored applications ({updated} score(s) changed).", "success")
 
@@ -443,7 +474,7 @@ class ApplicationsTab(QWidget):
                           lambda: self.ctx.pipeline.refresh_scores(self.ctx.profile), done)
 
     def _autopilot(self) -> None:
-        def done(materials) -> None:  # noqa: ANN001
+        def done(materials) -> None:
             self.refresh()
             self.ctx.notify(f"Autopilot prepared {len(materials)} application(s).", "success")
 
@@ -467,7 +498,7 @@ class ApplicationsTab(QWidget):
         self.refresh()
 
     def _export(self) -> None:
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.ctx.notify(f"Exported {path}", "success")
             th.open_path(path)
 
@@ -475,7 +506,7 @@ class ApplicationsTab(QWidget):
                           lambda: self.ctx.pipeline.export_tracker_csv(self.ctx.profile), done)
 
     def _export_calendar(self) -> None:
-        def done(path) -> None:  # noqa: ANN001
+        def done(path) -> None:
             self.ctx.notify(f"Calendar exported to {path}", "success")
             th.open_path(path)
 
@@ -483,4 +514,4 @@ class ApplicationsTab(QWidget):
                           lambda: self.ctx.pipeline.export_calendar_ics(self.ctx.profile), done)
 
 
-__all__ = ["ApplicationsTab", "COLUMNS"]
+__all__ = ["COLUMNS", "ApplicationsTab"]
