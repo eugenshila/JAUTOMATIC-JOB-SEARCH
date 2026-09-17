@@ -309,6 +309,31 @@ class PipelineTests(WorkspaceTestCase):
             [python_job(), welder_job()], self.profile, threshold=0)
         self.assertEqual(len(created), 2)
 
+    def test_import_review_tracks_below_bar_as_proposed(self):
+        good = python_job(url="https://example.com/jobs/good")
+        weak = welder_job()
+        rows, created = self.pipeline.import_qualified(
+            [good, weak], self.profile, threshold=70)
+        self.assertEqual([a.job_id for a in created], [good.job_id])
+        reviewed = self.pipeline.import_review([weak])
+        self.assertEqual([a.job_id for a in reviewed], [weak.job_id])
+        app = self.workspace.application_for_job(weak.job_id)
+        self.assertEqual(app.status_enum, ApplicationStatus.PROPOSED)
+        self.assertEqual(self.pipeline.import_review([weak]), [])
+
+    def test_qualified_import_promotes_previous_proposals(self):
+        job = python_job(url="https://example.com/jobs/promote")
+        self.pipeline.import_review([job])
+        self.assertEqual(self.workspace.application_for_job(
+            job.job_id).status_enum, ApplicationStatus.PROPOSED)
+        _, created = self.pipeline.import_qualified([job], self.profile, threshold=70)
+        self.assertIn(job.job_id, [a.job_id for a in created])
+        self.assertEqual(self.workspace.application_for_job(
+            job.job_id).status_enum, ApplicationStatus.DISCOVERED)
+        history = self.workspace.application_for_job(job.job_id).history
+        notes = [e.get("note", "") for e in history]
+        self.assertTrue(any("meets the qualification bar" in n for n in notes))
+
     def test_prepare_generates_documents_and_moves_status(self):
         row = self._tracked()
         materials = self.pipeline.prepare(row.application, self.profile)

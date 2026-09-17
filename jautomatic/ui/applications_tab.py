@@ -30,7 +30,8 @@ COLUMNS = ["Status", "Score", "Role", "Company", "Follow-up", "Interview", "Docs
 
 class ApplicationsTab(QWidget):
     page_title = "Applications"
-    page_subtitle = "Every tracked posting, its documents and the next action"
+    page_subtitle = ("Every tracked posting — qualified and below-bar proposals — "
+                     "its documents and the next action")
 
     def __init__(self, ctx) -> None:
         super().__init__()

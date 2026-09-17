@@ -330,13 +330,42 @@ class ApplicationPipeline:
         Returns ``(rows, created)`` where ``rows`` is the full scored list (what the
         search table shows) and ``created`` is the tracker entries added.  Only jobs
         scoring at or above ``threshold`` are queued (``threshold <= 0`` keeps
-        everything, ``track=False`` waits instead of importing).
+        everything, ``track=False`` waits instead of importing).  Postings tracked
+        earlier as *proposed* (below the bar) that now meet it are promoted to the
+        queue in place.
         """
         profile = profile or self.workspace.load_profile()
         rows = [(job, match_job(profile, job, self.settings)) for job in jobs]
         selected = [job for job, match in rows if threshold <= 0 or match.score >= threshold]
         created = self.import_jobs(selected) if track else []
+        if track and threshold > 0:
+            lifted = self._promote_past_reviews([job for job, match in rows
+                                                 if match.score >= threshold])
+            created = lifted + [entry for entry in created if entry not in lifted]
         return rows, created
+
+    def import_review(self, jobs: list[JobPosting]) -> list[Application]:
+        """Track below-the-bar postings as ``Proposed`` so they show on the
+        Applications page for a human review (autopilot, auto-clear and the
+        follow-up ladder ignore them until the status is changed).
+        """
+        created = self.import_jobs(jobs)
+        for application in created:
+            application.set_status(ApplicationStatus.PROPOSED,
+                                   "below the qualification bar — added for review")
+            self.workspace.save_application(application)
+        return created
+
+    def _promote_past_reviews(self, jobs: list[JobPosting]) -> list[Application]:
+        lifted: list[Application] = []
+        for job in jobs:
+            application = self.workspace.application_for_job(job.job_id)
+            if application and application.status_enum is ApplicationStatus.PROPOSED:
+                application.set_status(ApplicationStatus.DISCOVERED,
+                                       "now meets the qualification bar")
+                self.workspace.save_application(application)
+                lifted.append(application)
+        return lifted
 
     def ensure_application(self, job: JobPosting) -> Application:
         self.workspace.save_jobs([job])

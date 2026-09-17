@@ -322,32 +322,37 @@ class JobSearchTab(QWidget):
             cancel = self.ctx.cancel_event.is_set
             outcome = self.ctx.pipeline.scraper.search(query, should_cancel=cancel)
             if cancel():
-                return outcome, [], []  # closing: skip the import against the workspace
+                return outcome, [], [], []  # closing: skip the import against the workspace
             profile = self.ctx.profile
             threshold = self.min_match.value()
             rows, created = self.ctx.pipeline.import_qualified(
                 outcome.jobs, profile, threshold=threshold,
                 track=(import_results or self.auto_track.isChecked()))
-            return outcome, rows, created
+            proposed = []
+            if (import_results or self.auto_track.isChecked()) and threshold > 0:
+                below = [job for job, match in rows if match.score < threshold]
+                proposed = self.ctx.pipeline.import_review(below)
+            return outcome, rows, created, proposed
 
         def done(result) -> None:
             self.progress.setVisible(False)
             self.search_button.setEnabled(True)
             self.search_import_button.setEnabled(True)
-            outcome, rows, created = result
+            outcome, rows, created, proposed = result
             self.outcome = outcome
             self.ranked = rows
             self._fill_table()
             queued = (f" · {len(created)} new in your queue"
                       if self.auto_track.isChecked() else "")
-            message = outcome.summary() + queued
+            review = f" · {len(proposed)} below the bar added for review" if proposed else ""
+            message = outcome.summary() + queued + review
             threshold = self.min_match.value()
             if outcome.jobs and threshold > 0:
                 qualified = sum(1 for _, match in rows if match.score >= threshold)
                 if qualified == 0:
-                    message += (f" None reached the {threshold}/100 qualification bar, so "
-                                f"none were queued — lower the bar to review them or widen "
-                                f"your profile/query.")
+                    message += (f" None reached the {threshold}/100 qualification bar — the "
+                                f"low matches are on your Applications page as Proposed; "
+                                f"promote them if you want to pursue, or lower the bar.")
             if not outcome.jobs:
                 message += (" Nothing on the enabled boards — they focus on tech/remote "
                             "roles. For supply chain / logistics, add free Adzuna API keys "

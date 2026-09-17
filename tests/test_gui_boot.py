@@ -95,7 +95,10 @@ class GuiBootTest(unittest.TestCase):
                 window.save_settings(window.settings)
                 low = run(window, "python")
                 self.assertGreater(len(low.ranked), 0)
-                self.assertEqual(window.workspace.applications(), [])
+                apps = window.workspace.applications()
+                self.assertGreater(len(apps), 0)
+                self.assertTrue(all(a.status_enum.value == "proposed" for a in apps))
+                self.assertIn("below the bar added for review", low.result_summary.text())
                 self.assertIn("qualification bar", low.result_summary.text())
             finally:
                 window.close()

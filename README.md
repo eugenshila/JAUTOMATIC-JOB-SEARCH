@@ -155,6 +155,13 @@ The score drives ranking, the autopilot threshold, and which strengths the cover
 e-mail highlight (missing keywords are never invented — the generators only re-use what your
 profile actually contains).
 
+**Reading your score:** below **50** the match is *weak*, **50–69** is *possible*, **70+**
+is *strong*, **85+** *excellent*. The default qualification bar is **70/100** (adjust it in
+Settings → Automatic actions or on the Search tab). Search results that do not reach the bar
+are not auto-queued for applications — instead they appear on the **Applications** page as
+**Proposed**, where you can review and promote them (promotion is automatic once a profile
+edit pushes them over the bar).
+
 ## Job sources
 
 | Source | Key needed | Notes |

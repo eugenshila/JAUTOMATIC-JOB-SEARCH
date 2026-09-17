@@ -286,6 +286,7 @@ def keywords(text: str, limit: int = 40) -> list[str]:
 # --------------------------------------------------------------------------- #
 class ApplicationStatus(str, Enum):
     DISCOVERED = "discovered"        # imported from a search, untouched
+    PROPOSED = "proposed"            # below the qualification bar, kept for review
     SHORTLISTED = "shortlisted"      # user (or autopilot) marked it as interesting
     MATERIALS_READY = "materials_ready"  # CV + cover letter + email drafted
     SENT = "sent"                    # application dispatched
@@ -298,6 +299,7 @@ class ApplicationStatus(str, Enum):
     def label(self) -> str:
         return {
             "discovered": "Discovered",
+            "proposed": "Proposed",
             "shortlisted": "Shortlisted",
             "materials_ready": "Materials ready",
             "sent": "Sent",
@@ -311,6 +313,7 @@ class ApplicationStatus(str, Enum):
     def color(self) -> str:
         return {
             "discovered": "#8b93a7",
+            "proposed": "#7f9a8b",
             "shortlisted": "#4f8cff",
             "materials_ready": "#a06bff",
             "sent": "#2fb3b3",
@@ -330,7 +333,7 @@ class ApplicationStatus(str, Enum):
 
     @classmethod
     def ordered(cls) -> list[ApplicationStatus]:
-        return [cls.DISCOVERED, cls.SHORTLISTED, cls.MATERIALS_READY, cls.SENT,
+        return [cls.DISCOVERED, cls.PROPOSED, cls.SHORTLISTED, cls.MATERIALS_READY, cls.SENT,
                 cls.INTERVIEW, cls.OFFER, cls.REJECTED, cls.ARCHIVED]
 
 

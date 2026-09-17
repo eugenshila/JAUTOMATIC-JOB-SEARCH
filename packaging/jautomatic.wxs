@@ -23,9 +23,17 @@
   change (changing it orphans existing installs).  New major WiX note: WiX v6+
   accepts a human-readable Package/@Id as a replacement for the UpgradeCode
   GUID; see packaging/README.md "Upgrading WiX" before touching this.
+
+  ProductCode is PINNED via Package/@Id so that every rebuild of the same
+  version installs IN PLACE (repair semantics) instead of landing side-by-side.
+  Only change it for a genuine identity change, never per-build.  One-time
+  migration note: installs created before this pin have a random ProductCode;
+  uninstall the old code once (see release-guide.md) and the pinned code then
+  owns upgrades for good.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="JAUTOMATIC JOB SEARCH"
+           Id="0C40C2FC-AF97-44D4-AD2D-F17DF82E2A14"
            Language="1033"
            Version="$(var.ProductVersion)"
            Manufacturer="JAUTOMATIC"
