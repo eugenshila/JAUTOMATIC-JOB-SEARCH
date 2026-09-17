@@ -170,6 +170,7 @@ SOURCE_LABELS = {
     "remotive": "Remotive", "arbeitnow": "Arbeitnow", "remoteok": "RemoteOK",
     "himalayas": "Himalayas", "uae_ai": "UAE AI jobs",
     "adzuna": "Adzuna", "sample": "the sample job feed", "manual": "manually pasted link",
+    "linkedin": "LinkedIn (browser)",
 }
 
 # Terms that look wrong when title-cased naively - used when skills appear in prose.
@@ -783,9 +784,10 @@ class AppSettings:
     include_cover_letter: bool = True
     include_email_draft: bool = True
     cv_template: str = "modern"           # modern | classic | compact
-    export_format: str = "docx"           # docx | md | txt
+    export_format: str = "docx"           # docx | pdf | md | txt
     min_salary: int = 0
     min_match_score: int = 70               # results below this match score are hidden (0 = off)
+    auto_track_qualified: bool = True       # search results at/above min_match_score go to the queue
     min_pay_usd: int = 10                   # Tasks search: only gigs advertising >= this per task (0 = off)
     remote_only: bool = False
     exclude_keywords: str = ""            # comma separated, filters out postings
@@ -797,6 +799,7 @@ class AppSettings:
     auto_refresh_enabled: bool = False    # timed re-scrape of the enabled boards
     auto_refresh_minutes: int = 30        # every N minutes when enabled
     notify_new_matches: bool = True       # tray/desktop alert when a refresh finds fresh roles
+    linkedin_easy_apply: bool = True      # LinkedIn hand-off pre-filters Easy Apply (f_AL=true)
     llm_provider: str = "none"            # none | ollama (local LLM, fully opt-in)
     llm_model: str = "llama3.2"           # Ollama model used for draft letters
     llm_base_url: str = "http://localhost:11434"
@@ -836,7 +839,8 @@ class AppSettings:
             except (TypeError, ValueError):
                 payload[key] = getattr(cls(), key)
         for key in ("autopilot", "include_cover_letter", "include_email_draft", "remote_only",
-                    "auto_refresh_enabled", "notify_new_matches"):
+                    "auto_refresh_enabled", "notify_new_matches", "linkedin_easy_apply",
+                    "auto_track_qualified"):
             payload[key] = bool(payload.get(key))
         return cls(**payload)
 

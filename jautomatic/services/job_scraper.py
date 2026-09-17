@@ -28,7 +28,7 @@ import requests
 from ..models import JobPosting, keywords, strip_html
 
 USER_AGENT = (
-    "JAUTOMATIC-JOB-SEARCH/1.3 (+https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH) "
+    "JAUTOMATIC-JOB-SEARCH/1.4 (+https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH) "
     "job-search-desktop-app"
 )
 
@@ -215,8 +215,7 @@ def posting_from_url(url: str, timeout: int = 15) -> JobPosting:
     source = "linkedin" if "linkedin" in literal else "manual"
     if source == "linkedin":
         # LinkedIn posts "Title - Company | LinkedIn" into og:title; strip that.
-        title = re.sub(r"\s*-\s*[^|]*?\|\s*(Weekly|Monthly|)$", "", title)
-        title = re.sub(r"\s*\|\s*LinkedIn\s*$", "", title).strip()
+        title = re.sub(r"\s*-\s*[^|]*\|\s*LinkedIn\s*$", "", title).strip()
     return JobPosting(
         source=source, title=title or "Job posting", company=company or parsed.netloc,
         location=location, remote=remote, salary_min=salary_min, salary_max=salary_max,
@@ -1079,6 +1078,7 @@ __all__ = [
     "SearchOutcome",
     "SearchQuery",
     "default_sources",
+    "linkedin_search_url",
     "looks_remote",
     "parse_salary",
     "posting_from_url",

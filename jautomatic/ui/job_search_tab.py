@@ -75,11 +75,17 @@ class JobSearchTab(QWidget):
         self.min_match = QSpinBox()
         self.min_match.setRange(0, 100)
         self.min_match.setSuffix(" / 100")
-        self.min_match.setToolTip("Hide results below this match score (0 shows everything)")
+        self.min_match.setToolTip("Qualification bar: hide results below this match score "
+                                  "(0 shows everything). Strong matches land at 70+.")
         self.min_match.valueChanged.connect(self._on_min_match_changed)
+        self.auto_track = QCheckBox("Auto-add ≥ threshold to queue")
+        self.auto_track.setToolTip("After a search, results at or above the qualification "
+                                   "bar are added to your application queue automatically.")
+        self.auto_track.toggled.connect(self._on_auto_track_changed)
         row_two.addWidget(self.per_source)
         row_two.addWidget(self.min_salary)
         row_two.addWidget(self.min_match)
+        row_two.addWidget(self.auto_track)
         row_two.addWidget(th.label("Sources:", "muted"))
         for name, source in self.ctx.pipeline.scraper.sources.items():
             box = QCheckBox(source.label)
@@ -103,6 +109,11 @@ class JobSearchTab(QWidget):
                                     self.import_demo))
         buttons.addWidget(th.button("Import all results", "default",
                                     "Add every current result to the tracker", self.import_all))
+        buttons.addWidget(th.button("LinkedIn (browser)", "ghost",
+                                    "Open your query on linkedin.com — no public API, so "
+                                    "the app hands the search to your browser; Easy Apply "
+                                    "is applied as a built-in filter.",
+                                    self.open_linkedin_search))
         buttons.addStretch(1)
         query_card.add_layout(buttons)
 
@@ -207,6 +218,7 @@ class JobSearchTab(QWidget):
         self.per_source.setValue(settings.results_per_source)
         self.min_salary.setValue(settings.min_salary)
         self.min_match.setValue(settings.min_match_score)
+        self.auto_track.setChecked(settings.auto_track_qualified)
         self.remote_only.setChecked(settings.remote_only)
         enabled = set(settings.enabled_sources)
         for name, box in self.source_boxes.items():
@@ -242,8 +254,9 @@ class JobSearchTab(QWidget):
         self.ctx.save_settings(self.ctx.settings)
         if not self.ranked:
             self.result_summary.setText(
-                f"Filter: only results scoring ≥ {value}/100 are shown. Run a search."
-                if value else "Filter off — every result is shown. Run a search.")
+                f"Qualification bar: only results scoring ≥ {value}/100 are shown "
+                f"(and auto-added to your queue). Run a search."
+                if value else "Qualification bar off — every result is shown. Run a search.")
             return
         self._fill_table()
         if value:
@@ -252,6 +265,10 @@ class JobSearchTab(QWidget):
         else:
             self.result_summary.setText(f"Filter cleared — showing all results."
                                         f"{self._filter_note()}")
+
+    def _on_auto_track_changed(self, checked: bool) -> None:
+        self.ctx.settings.auto_track_qualified = checked
+        self.ctx.save_settings(self.ctx.settings)
 
     def _filter_note(self) -> str:
         threshold = self.min_match.value()
@@ -305,19 +322,39 @@ class JobSearchTab(QWidget):
             cancel = self.ctx.cancel_event.is_set
             outcome = self.ctx.pipeline.scraper.search(query, should_cancel=cancel)
             if cancel():
-                return outcome, []  # closing: skip the import against the workspace
-            return outcome, self.ctx.pipeline.import_jobs(outcome.jobs)
+                return outcome, [], []  # closing: skip the import against the workspace
+            profile = self.ctx.profile
+            threshold = self.min_match.value()
+            rows, created = self.ctx.pipeline.import_qualified(
+                outcome.jobs, profile, threshold=threshold,
+                track=(import_results or self.auto_track.isChecked()))
+            return outcome, rows, created
 
         def done(result) -> None:
             self.progress.setVisible(False)
             self.search_button.setEnabled(True)
             self.search_import_button.setEnabled(True)
-            outcome, created = result
+            outcome, rows, created = result
             self.outcome = outcome
-            self.ranked = [(job, match_job(self.ctx.profile, job, self.ctx.settings))
-                           for job in outcome.jobs]
+            self.ranked = rows
             self._fill_table()
-            message = outcome.summary() + f" · {len(created)} new in tracker"
+            queued = (f" · {len(created)} new in your queue"
+                      if self.auto_track.isChecked() else "")
+            message = outcome.summary() + queued
+            threshold = self.min_match.value()
+            if outcome.jobs and threshold > 0:
+                qualified = sum(1 for _, match in rows if match.score >= threshold)
+                if qualified == 0:
+                    message += (f" None reached the {threshold}/100 qualification bar, so "
+                                f"none were queued — lower the bar to review them or widen "
+                                f"your profile/query.")
+            if not outcome.jobs:
+                message += (" Nothing on the enabled boards — they focus on tech/remote "
+                            "roles. For supply chain / logistics, add free Adzuna API keys "
+                            "in Settings → Job boards.")
+            skipped = _skipped_sources()
+            if skipped:
+                message += f" Skipped: {', '.join(skipped)} — add API keys in Settings to search them."
             message += self._filter_note()
             self.result_summary.setText(message)
             level = "warning" if outcome.errors else "success"
@@ -328,6 +365,17 @@ class JobSearchTab(QWidget):
             for tab in ("dashboard", "applications"):
                 if hasattr(self.ctx.tabs.get(tab), "refresh"):
                     self.ctx.tabs[tab].refresh()
+
+        def _skipped_sources() -> tuple[str, ...]:
+            labels: list[str] = []
+            for name, box in self.source_boxes.items():
+                if not box.isChecked():
+                    continue
+                source = self.ctx.pipeline.scraper.sources.get(name)
+                if source and source.needs_credentials and not source.is_configured(
+                        self.ctx.settings):
+                    labels.append(source.label)
+            return tuple(labels)
 
         def failed(_message: str) -> None:
             self.progress.setVisible(False)
@@ -409,6 +457,18 @@ class JobSearchTab(QWidget):
             self.ctx.notify(f"Could not read that link — {message}", "error")
 
         self.ctx.run_task("Reading the pasted link", work, done, failed)
+
+    def open_linkedin_search(self) -> None:
+        """Hand the current query off to LinkedIn's own job search in the browser."""
+        from ..services.job_scraper import linkedin_search_url
+        easy_apply = bool(getattr(self.ctx.settings, "linkedin_easy_apply", True))
+        url = linkedin_search_url(
+            self.query.text() or (self.ctx.profile.desired_titles[0]
+                                  if self.ctx.profile.desired_titles else ""),
+            self.location.text(), easy_apply_only=easy_apply, remote_only=self.remote_only.isChecked())
+        if th.open_in_browser(url):
+            self.ctx.notify("Opened LinkedIn in your browser — track jobs there by pasting "
+                            "their URL into the box below.", "info")
 
     # ------------------------------------------------------------- table  #
     def _fill_table(self) -> None:

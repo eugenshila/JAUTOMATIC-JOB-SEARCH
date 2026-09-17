@@ -189,6 +189,44 @@ class MatchingTests(unittest.TestCase):
         self.assertIsInstance(result.score, int)
         self.assertTrue(0 <= result.score <= 100)
 
+    def test_missed_headline_requirements_cap_below_possible(self):
+        # The posting reads like a perfect Python match, but its stated headline
+        # requirements (tags) appear nowhere in the profile: 70+ must be out of reach.
+        job = python_job(tags=["welding", "carpentry"])
+        result = match_job(sample_profile(), job)
+        self.assertLessEqual(result.score, 49)
+        self.assertTrue(any("headline requirements" in r for r in result.reasons))
+
+    def test_location_mismatch_cap_holds_below_seventy(self):
+        # Deal-breaker (can't/ won't commute) means the job can never read as "qualified".
+        onsite = python_job(remote=False, location="Sydney, Australia")
+        result = match_job(sample_profile(), onsite)
+        self.assertFalse(result.location_fit)
+        self.assertLess(result.score, 70)
+
+    def test_below_floor_salary_cap_holds_below_seventy(self):
+        cheap = python_job(salary_min=30000, salary_max=40000, currency="USD")
+        result = match_job(sample_profile(), cheap)
+        self.assertFalse(result.salary_fit)
+        self.assertLess(result.score, 70)
+
+    def test_single_matching_headline_requirement_clears_gate(self):
+        job = python_job(tags=["python", "welding", "carpentry"])
+        result = match_job(sample_profile(), job)
+        self.assertGreaterEqual(result.score, 70)
+
+    def test_qualified_job_with_partial_coverage_still_crosses_seventy(self):
+        # A real posting names skills the profile does not own. Covering the
+        # posting's own headline requirements (tags) must still reach 70+.
+        noisy = " ".join([
+            "atomic habits", "lean startup", "regression sprint", "data modeling",
+            "event sourcing", "observability", "chron jobs", "feature flags",
+            "canary releases", "blue green deploys", "graceful degradation", "idempotency"])
+        job = python_job(description=python_job().description + " " + noisy)
+        result = match_job(sample_profile(), job)
+        self.assertGreaterEqual(result.score, 70)
+        self.assertLess(result.score, match_job(sample_profile(), python_job()).score)
+
 
 class MinPayFilterTests(unittest.TestCase):
     def _job(self, low: int = 0, high: int = 0, currency: str = "USD") -> JobPosting:
@@ -248,6 +286,28 @@ class PipelineTests(WorkspaceTestCase):
         again = self.pipeline.import_jobs(outcome.jobs)
         self.assertEqual(again, [])
         self.assertEqual(len(self.pipeline.tracker(self.profile)), len(outcome.jobs))
+
+    def test_import_qualified_queues_only_threshold_hits(self):
+        good = python_job(url="https://example.com/jobs/good")
+        weak = welder_job()
+        rows, created = self.pipeline.import_qualified(
+            [good, weak], self.profile, threshold=70)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([a.job_id for a in created], [good.job_id])
+        tracked = {a.job_id for a in self.workspace.applications()}
+        self.assertEqual(tracked, {good.job_id})
+
+    def test_import_qualified_with_track_false_adds_nothing(self):
+        rows, created = self.pipeline.import_qualified(
+            [python_job(), welder_job()], self.profile, threshold=70, track=False)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(created, [])
+        self.assertEqual(self.workspace.applications(), [])
+
+    def test_import_qualified_zero_threshold_keeps_everything(self):
+        _, created = self.pipeline.import_qualified(
+            [python_job(), welder_job()], self.profile, threshold=0)
+        self.assertEqual(len(created), 2)
 
     def test_prepare_generates_documents_and_moves_status(self):
         row = self._tracked()
@@ -532,10 +592,10 @@ class PipelineTests(WorkspaceTestCase):
         self.assertTrue(prepared[0].cv.path.exists())
 
     def test_refresh_scores_updates_stored_scores(self):
-        cheap = self.pipeline.ensure_application(
-            python_job(url="https://example.com/jobs/other", salary_min=20000, salary_max=25000,
+        target = self.pipeline.ensure_application(
+            python_job(url="https://example.com/jobs/other", salary_min=85000, salary_max=120000,
                        title="Junior Support Engineer", company="Helpdesk Co"))
-        self.pipeline.prepare(cheap, self.profile)
+        self.pipeline.prepare(target, self.profile)
         stored_before = {a.application_id: a.match_score for a in self.workspace.applications()}
         # the profile gains every keyword the postings ask for -> scores must rise
         profile = self.profile
@@ -832,3 +892,33 @@ class ClearTests(WorkspaceTestCase):
 
     def test_default_setting_has_clear_days(self):
         self.assertEqual(AppSettings().auto_clear_days, 5)
+
+    def test_default_auto_tracks_qualified_results(self):
+        self.assertTrue(AppSettings().auto_track_qualified)
+        self.assertFalse(AppSettings.from_dict({"auto_track_qualified": False}).auto_track_qualified)
+
+    def test_pending_auto_clear_previews_without_changing(self):
+        old_created = (date.today() - timedelta(days=10)).isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=5))
+        job = python_job()
+        self.workspace.save_jobs([job])
+        app = self._make_application(job, created_at=old_created)
+        pending = pipeline.pending_auto_clear()
+        self.assertEqual([a.application_id for a in pending], [app.application_id])
+        loaded = self.workspace.get_application(app.application_id)
+        self.assertEqual(loaded.status, ApplicationStatus.DISCOVERED.value)
+
+    def test_pending_auto_clear_empty_when_off(self):
+        old_created = (date.today() - timedelta(days=30)).isoformat() + " 00:00:00"
+        pipeline = ApplicationPipeline(self.workspace, AppSettings(auto_clear_days=0))
+        job = python_job()
+        self.workspace.save_jobs([job])
+        self._make_application(job, created_at=old_created)
+        self.assertEqual(pipeline.pending_auto_clear(), [])
+
+    def test_settings_default_linkedin_easy_apply_on(self):
+        self.assertTrue(AppSettings().linkedin_easy_apply)
+
+    def test_settings_coerce_linkedin_easy_apply_from_dict(self):
+        settings = AppSettings.from_dict({"linkedin_easy_apply": False})
+        self.assertFalse(settings.linkedin_easy_apply)

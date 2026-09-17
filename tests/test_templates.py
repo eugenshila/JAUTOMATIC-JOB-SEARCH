@@ -10,7 +10,8 @@ from jautomatic.services import template_engine
 from jautomatic.services.application_pipeline import match_job
 from jautomatic.services.cv_generator import (CUSTOM_PREFIX, STARTER_TEMPLATE, TEMPLATE_LABELS,
                                               TEMPLATES, CVGenerator, TemplateRegistry,
-                                              render_markdown, template_context, template_label)
+                                              document_suffix, markdown_to_html, render_markdown,
+                                              template_context, template_label)
 from tests.test_documents import job, profile
 
 
@@ -216,11 +217,23 @@ class CustomTemplateRegistryTests(unittest.TestCase):
     def test_custom_template_exports_to_every_format(self):
         (self.dir / "mine.md").write_text("# {{ name }}\n- {{ headline }}", "utf-8")
         generator = CVGenerator(self.dir)
-        for fmt, suffix in (("docx", ".docx"), ("md", ".md"), ("txt", ".txt")):
+        for fmt, suffix in (("docx", ".docx"), ("md", ".md"), ("txt", ".txt"), ("pdf", ".pdf")):
             with tempfile.TemporaryDirectory() as out:
                 document = generator.generate(profile(), job(), "custom:mine.md", Path(out), fmt)
                 self.assertEqual(document.path.suffix, suffix)
                 self.assertGreater(document.path.stat().st_size, 20)
+
+    def test_document_suffix_handles_pdf(self):
+        self.assertEqual(document_suffix("pdf"), ".pdf")
+        self.assertEqual(document_suffix("PDF"), ".pdf")
+        self.assertEqual(document_suffix(""), ".docx")
+
+    def test_markdown_to_html_marks_headings_bullets_and_inline(self):
+        body = markdown_to_html("# Lead\n\n- one **bold**\n- two\n\n---\n\nplain *text*")
+        self.assertIn("<h1>Lead</h1>", body)
+        self.assertIn("<ul><li>one <b>bold</b></li><li>two</li></ul>", body)
+        self.assertIn("<hr/>", body)
+        self.assertIn("plain <i>text</i>", body)
 
 
 class SampleProfileTemplateSmokeTest(unittest.TestCase):

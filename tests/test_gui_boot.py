@@ -72,6 +72,82 @@ class GuiBootTest(unittest.TestCase):
                 second.close()
                 self.app.processEvents()
 
+    def test_search_has_helpful_guidance_when_nothing_qualifies(self):
+        from jautomatic.models import Profile
+
+        def run(window, query):
+            tab = window.tabs["search"]
+            for name, box in tab.source_boxes.items():
+                box.setChecked(name == "sample")
+            tab.query.setText(query)
+            tab.start_search(False)
+            deadline = time.time() + 30
+            while window._busy and time.time() < deadline:
+                self.app.processEvents()
+                time.sleep(0.05)
+            return tab
+
+        with tempfile.TemporaryDirectory(prefix="jautomatic-search-guidance-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.save_profile(Profile())
+                window.settings.enabled_sources = ["sample"]
+                window.save_settings(window.settings)
+                low = run(window, "python")
+                self.assertGreater(len(low.ranked), 0)
+                self.assertEqual(window.workspace.applications(), [])
+                self.assertIn("qualification bar", low.result_summary.text())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+        with tempfile.TemporaryDirectory(prefix="jautomatic-search-guidance-empty-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.save_profile(Profile())
+                window.settings.enabled_sources = ["sample"]
+                window.save_settings(window.settings)
+                nothing = run(window, "supply chain")
+                self.assertEqual(nothing.ranked, [])
+                self.assertIn("Adzuna", nothing.result_summary.text())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_pdf_export_writes_a_valid_reader_pdf(self):
+        from jautomatic.services.cv_generator import export
+        markdown = "# Alex Doe\n\n- Senior Python Engineer\n- **Data platforms**\n"
+        with tempfile.TemporaryDirectory(prefix="jautomatic-pdf-") as tmp:
+            path = export(markdown, Path(tmp) / "out.pdf", fmt="pdf", title="CV – Alex Doe")
+            self.assertEqual(path.suffix, ".pdf")
+            head = path.read_bytes()[:5]
+            self.assertEqual(head, b"%PDF-")
+            self.assertGreater(path.stat().st_size, 2000)
+
+    def test_search_done_handles_the_qualified_result(self):
+        from jautomatic.models import SAMPLE_PROFILE, Profile
+        with tempfile.TemporaryDirectory(prefix="jautomatic-search-") as tmp:
+            window = MainWindow(data_dir=tmp)
+            try:
+                window.save_profile(Profile.from_dict(SAMPLE_PROFILE))
+                window.settings.enabled_sources = ["sample"]
+                window.save_settings(window.settings)
+                tab = window.tabs["search"]
+                for name, box in tab.source_boxes.items():
+                    box.setChecked(name == "sample")
+                tab.query.setText("python")
+                tab.start_search(False)
+                deadline = time.time() + 30
+                while window._busy and time.time() < deadline:
+                    self.app.processEvents()
+                    time.sleep(0.05)
+                self.assertFalse(window._busy)
+                self.assertGreater(len(tab.ranked), 0)
+                self.assertGreater(len(window.workspace.applications()), 0)
+            finally:
+                window.close()
+                self.app.processEvents()
+
     # ------------------------------------------------- geometry (fixed f/up 10)
     def test_geometry_is_stored_in_settings_json_and_restored(self):
         with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:

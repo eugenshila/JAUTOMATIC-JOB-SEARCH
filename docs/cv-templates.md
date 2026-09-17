@@ -1,7 +1,7 @@
 # CV templates
 
 JAUTOMATIC renders every CV from a template into Markdown, then exports that to
-`.docx` / `.md` / `.txt`. You can pick one of the six built-in templates or write
+`.docx` / `.pdf` / `.md` / `.txt`. You can pick one of the six built-in templates or write
 your own.
 
 ## Built-in templates

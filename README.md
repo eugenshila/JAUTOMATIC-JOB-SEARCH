@@ -165,6 +165,7 @@ profile actually contains).
 | [Himalayas](https://himalayas.app) | no | remote roles worldwide incl. Kenya/Africa/UAE, JSON API |
 | [UAE AI jobs](https://artificial.ae) | no | UAE AI & tech roles (Dubai, Abu Dhabi), JSON API |
 | [Adzuna](https://developer.adzuna.com) | free app id + key | aggregated listings, 21 countries incl. South Africa |
+| [LinkedIn](https://www.linkedin.com/jobs/search) | no (browser hand-off) | no public API — opens your search in the browser, Easy Apply applied as a filter, then track each job by pasting its URL |
 | Demo data | no | offline sample postings so the app is always usable |
 
 Sources are queried in parallel; a failing board is reported in the results line ("issues:

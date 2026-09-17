@@ -22,7 +22,8 @@ from ..models import AppSettings
 from ..services.cv_generator import template_label
 from . import theme as th
 
-FORMATS = [("Microsoft Word (.docx)", "docx"), ("Markdown (.md)", "md"), ("Plain text (.txt)", "txt")]
+FORMATS = [("Microsoft Word (.docx)", "docx"), ("PDF (.pdf)", "pdf"),
+           ("Markdown (.md)", "md"), ("Plain text (.txt)", "txt")]
 
 
 class SettingsTab(QWidget):
@@ -91,6 +92,21 @@ class SettingsTab(QWidget):
                              "and UAE AI jobs need no key. Register free at "
                              "developer.adzuna.com.", "small", wrap=True))
         left.addWidget(sources)
+
+        # linkedin (hand-off) -------------------------------------------- #
+        linkedin = th.Card("LinkedIn (browser hand-off)",
+                           "LinkedIn has no public job API and blocks third-party "
+                           "scraping, so the app opens your search in your own browser")
+        self.linkedin_easy_apply = QCheckBox("Apply LinkedIn's Easy Apply filter (f_AL=true)")
+        self.linkedin_easy_apply.setToolTip(
+            "When on, the LinkedIn search opens pre-filtered to Easy Apply postings only.")
+        self.linkedin_easy_apply.toggled.connect(self._mark_dirty)
+        linkedin.add(self.linkedin_easy_apply)
+        linkedin.add(th.label(
+            "Browse the results and paste any job's URL into the search tab's *Track from "
+            "URL* box — the app stores the posting, keeps the apply hyperlink and lets you "
+            "prep a tailored CV, cover letter and e-mail for it.", "small", wrap=True))
+        left.addWidget(linkedin)
 
         # search defaults ------------------------------------------------ #
         search = th.Card("Search defaults")
@@ -245,7 +261,9 @@ class SettingsTab(QWidget):
         autopilot.add(th.label(
             "Untouched = discovered/shortlisted and never prepared or sent. Cleared "
             "applications are archived (out of the active queue) — the database and "
-            "history are kept, and you can filter them back in.", "small", wrap=True))
+            "history are kept, and you can filter them back in. Test it live from the "
+            "Applications tab → Preview auto-clear (dry run, nothing is changed).",
+            "small", wrap=True))
         right.addWidget(autopilot)
 
         # background refresh & notifications ---------------------------- #
@@ -371,6 +389,7 @@ class SettingsTab(QWidget):
         self.auto_refresh.setChecked(settings.auto_refresh_enabled)
         self.auto_refresh_minutes.setValue(settings.auto_refresh_minutes)
         self.notify_new.setChecked(settings.notify_new_matches)
+        self.linkedin_easy_apply.setChecked(settings.linkedin_easy_apply)
         index = self.llm_provider.findData(settings.llm_provider if
                                            settings.llm_provider in ("none", "ollama") else "none")
         self.llm_provider.setCurrentIndex(max(0, index))
@@ -414,6 +433,7 @@ class SettingsTab(QWidget):
         settings.auto_refresh_enabled = self.auto_refresh.isChecked()
         settings.auto_refresh_minutes = self.auto_refresh_minutes.value()
         settings.notify_new_matches = self.notify_new.isChecked()
+        settings.linkedin_easy_apply = self.linkedin_easy_apply.isChecked()
         settings.llm_provider = self.llm_provider.currentData() or "none"
         settings.llm_model = self.llm_model.text().strip() or "llama3.2"
         settings.llm_base_url = self.llm_base_url.text().strip() or "http://localhost:11434"

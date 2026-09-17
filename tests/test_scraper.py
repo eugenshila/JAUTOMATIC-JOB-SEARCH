@@ -8,14 +8,25 @@ import requests
 
 from jautomatic.models import AppSettings, JobPosting
 from jautomatic.services import job_scraper
-from jautomatic.services.job_scraper import (AdzunaSource, ArbeitnowSource, JobScraper,
-                                             RemoteOkSource, RemotiveSource,
-                                             HimalayasSource, ArtificialAeSource,
-                                             SampleSource,
-                                             TaskSource, SearchQuery, default_task_sources,
-                                             looks_remote, parse_salary, posting_from_url)
+from jautomatic.services.job_scraper import (
+    AdzunaSource,
+    ArbeitnowSource,
+    ArtificialAeSource,
+    HimalayasSource,
+    JobScraper,
+    RemoteOkSource,
+    RemotiveSource,
+    SampleSource,
+    SearchQuery,
+    TaskSource,
+    default_task_sources,
+    linkedin_search_url,
+    looks_remote,
+    parse_salary,
+    posting_from_url,
+)
 
-from .fixtures import ADZUNA, ARBEITNOW, HIMALAYAS, UAEAI, REMOTEOK, REMOTIVE
+from .fixtures import ADZUNA, ARBEITNOW, HIMALAYAS, REMOTEOK, REMOTIVE, UAEAI
 
 
 class SalaryParsingTests(unittest.TestCase):
@@ -415,6 +426,43 @@ class PostingFromUrlTests(unittest.TestCase):
                                side_effect=requests.exceptions.Timeout("too slow")):
             with self.assertRaises(requests.exceptions.RequestException):
                 posting_from_url("https://example.com/jobs/1")
+
+    def test_linkedin_url_is_labeled_linkedin(self):
+        page = """
+        <html><head>
+          <title>Senior Python Engineer - Northwind Analytics | LinkedIn</title>
+          <meta property="og:title" content="Senior Python Engineer - Northwind Analytics | LinkedIn">
+          <meta property="og:site_name" content="Northwind Analytics">
+        </head><body></body></html>
+        """
+        job, _ = self._fetch(page, "https://www.linkedin.com/jobs/view/1234567")
+        self.assertEqual(job.source, "linkedin")
+        self.assertEqual(job.title, "Senior Python Engineer")
+        self.assertEqual(job.url, "https://www.linkedin.com/jobs/view/1234567")
+
+
+class LinkedInHandoffTests(unittest.TestCase):
+    def _url(self, **overrides) -> str:
+        kwargs = {"query_text": "Python Engineer", "location": "Berlin, Germany", **overrides}
+        return linkedin_search_url(**kwargs)
+
+    def test_builds_guest_search_url_with_easy_apply_by_default(self):
+        url = self._url()
+        self.assertTrue(url.startswith("https://www.linkedin.com/jobs/search/?"))
+        self.assertIn("keywords=Python+Engineer", url)
+        self.assertIn("f_AL=true", url)
+
+    def test_easy_apply_can_be_yurned_off(self):
+        self.assertNotIn("f_AL", self._url(easy_apply_only=False))
+
+    def test_remote_filter_adds_f_wt(self):
+        self.assertIn("f_WT=2", self._url(remote_only=True))
+
+    def test_location_is_encoded(self):
+        self.assertIn("location=Berlin%2C+Germany", self._url())
+
+    def test_is_exported(self):
+        self.assertIn("linkedin_search_url", job_scraper.__all__)
 
 
 class ScraperPublicApiTests(unittest.TestCase):

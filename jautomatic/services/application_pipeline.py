@@ -45,6 +45,9 @@ from .job_scraper import JobScraper, SearchOutcome, SearchQuery
 
 # scoring weights (sum = 100)
 W_KEYWORDS, W_TITLE, W_LOCATION, W_SALARY, W_FRESHNESS = 55, 20, 10, 10, 5
+# description keywords fill up fast with nice-to-haves; covering 75% of a
+# posting's stated terms already shows qualification, so that is full keyword credit
+FULL_CREDIT_COVERAGE = 0.75
 
 
 # --------------------------------------------------------------------------- #
@@ -86,11 +89,18 @@ def _profile_text(profile: Profile) -> str:
 
 
 def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
-    """Score how well ``job`` fits ``profile`` (0-100) and explain why."""
+    """Score how well ``job`` fits ``profile`` (0-100) and explain why.
+
+    A score of 70+ is deliberately a *qualification* bar, not a popularity
+    score: it requires your profile to cover the posting's own headline
+    requirements (tags), your pay floor and location to fit, and your target
+    title to align.  Postings that fail a hard requirement are capped below 70.
+    """
     result = MatchResult()
     profile_text = _profile_text(profile)
     profile_tokens = set(keywords(profile_text, limit=400))
-    job_terms = [t.lower() for t in job.tags if t]
+    tag_terms = [t.lower() for t in job.tags if t]
+    job_terms = list(tag_terms)
     job_terms += [t for t in keywords(f"{job.title} {job.description}", limit=45)
                   if t not in job_terms]
     job_terms = job_terms[:40]
@@ -99,10 +109,11 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
         matched = [t for t in job_terms if t in profile_tokens]
         missing = [t for t in job_terms if t not in profile_tokens]
         # tag hits count double: they are the employer's own headline requirements
-        weight = sum(2 if t in [x.lower() for x in job.tags] else 1 for t in matched)
-        total = sum(2 if t in [x.lower() for x in job.tags] else 1 for t in job_terms)
+        tag_set = set(tag_terms)
+        weight = sum(2 if t in tag_set else 1 for t in matched)
+        total = sum(2 if t in tag_set else 1 for t in job_terms)
         coverage = weight / total if total else 0.0
-        result.score += round(W_KEYWORDS * min(1.0, coverage * 1.35))
+        result.score += round(W_KEYWORDS * min(1.0, coverage / FULL_CREDIT_COVERAGE))
         result.matched_keywords = matched[:12]
         result.missing_keywords = missing[:12]
         result.reasons.append(f"{len(matched)}/{len(job_terms)} posting keywords present in your profile")
@@ -174,7 +185,13 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
     else:
         result.reasons.append(f"posting is {age} days old")
 
-    result.score = max(0, min(100, result.score))
+    cap = 100
+    if tag_terms and not any(t in profile_tokens for t in tag_terms):
+        cap = 49
+        result.reasons.append("none of the posting's headline requirements appear in your profile")
+    if not result.location_fit or not result.salary_fit:
+        cap = min(cap, 59)
+    result.score = max(0, min(cap, result.score))
     return result
 
 
@@ -305,6 +322,22 @@ class ApplicationPipeline:
                 created.append(application)
         return created
 
+    def import_qualified(self, jobs: list[JobPosting], profile: Profile | None = None,
+                         threshold: int = 0, track: bool = True
+                         ) -> tuple[list[tuple[JobPosting, MatchResult]], list[Application]]:
+        """Score a batch, transfer the qualified ones to the queue, keep all for display.
+
+        Returns ``(rows, created)`` where ``rows`` is the full scored list (what the
+        search table shows) and ``created`` is the tracker entries added.  Only jobs
+        scoring at or above ``threshold`` are queued (``threshold <= 0`` keeps
+        everything, ``track=False`` waits instead of importing).
+        """
+        profile = profile or self.workspace.load_profile()
+        rows = [(job, match_job(profile, job, self.settings)) for job in jobs]
+        selected = [job for job, match in rows if threshold <= 0 or match.score >= threshold]
+        created = self.import_jobs(selected) if track else []
+        return rows, created
+
     def ensure_application(self, job: JobPosting) -> Application:
         self.workspace.save_jobs([job])
         existing = self.workspace.application_for_job(job.job_id)
@@ -393,22 +426,38 @@ class ApplicationPipeline:
 
         ``days`` comes from ``settings.auto_clear_days`` unless overridden; ``0``
         (or a false value stored in old settings) disables the sweep entirely.
+        Returns the number of applications archived.
         """
+        resolved, pending = self._auto_clear_plan(days)
+        for app in pending:
+            self.set_status(app, ApplicationStatus.ARCHIVED,
+                            f"auto-cleared after {resolved} day(s) without action")
+        return len(pending)
+
+    def pending_auto_clear(self, profile: Profile | None = None,
+                           days: int | None = None) -> list[Application]:
+        """Dry run: which untouched applications the next sweep would archive.
+
+        Pure read — nothing is changed, so the UI can preview exactly what
+        ``auto_clear_unacted`` would do.
+        """
+        _resolved, pending = self._auto_clear_plan(days)
+        return pending
+
+    def _auto_clear_plan(self, days: int | None) -> tuple[int, list[Application]]:
         days = int(days if days is not None else self.settings.auto_clear_days or 0)
         if days <= 0:
-            return 0
-        cutoff = (date.today() - timedelta(days=days)).isoformat()
-        moved = 0
+            return days, []
+        cutoff = date.today() - timedelta(days=days)
+        pending: list[Application] = []
         for app in self.workspace.applications():
             if not app.is_unacted:
                 continue
             created = parse_date(app.created_at)
-            if created is None or created > parse_date(cutoff):
+            if created is None or created > cutoff:
                 continue
-            self.set_status(app, ApplicationStatus.ARCHIVED,
-                            f"auto-cleared after {days} day(s) without action")
-            moved += 1
-        return moved
+            pending.append(app)
+        return days, pending
 
     # -- materials --------------------------------------------------------- #
     def prepare(self, application: Application | str, profile: Profile | None = None,

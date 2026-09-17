@@ -2,8 +2,8 @@
 
 Templates are pure functions ``(profile, job, match) -> str`` that render a
 Markdown-ish document.  Markdown is the canonical in-memory format; exporters
-turn it into ``.md`` / ``.txt`` / ``.docx`` (and the app shows it in a rich
-text preview).
+turn it into ``.md`` / ``.txt`` / ``.docx`` / ``.pdf`` (and the app shows it
+in a rich text preview).
 
 Six templates ship by default:
 
@@ -782,6 +782,87 @@ def to_docx(markdown: str, path: Path, title: str = "") -> Path:
     return path
 
 
+def markdown_to_html(markdown: str) -> str:
+    """Minimal Markdown -> HTML body (headings, bullets, bold, rules)."""
+    import html as _html
+
+    parts: list[str] = []
+    for raw in markdown.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            parts.append("<p></p>")
+            continue
+        if line.strip() in ("---", "***"):
+            parts.append("<hr/>")
+            continue
+        heading = re.match(r"^(#{1,6})\s*(.*)$", line)
+        if heading:
+            level = min(len(heading.group(1)), 4)
+            parts.append(f"<h{level}>{_inline_html(_strip_inline(heading.group(2)))}</h{level}>")
+            continue
+        bullet = re.match(r"^\s*[-*]\s+(.*)$", line)
+        if bullet:
+            parts.append(f"<li>{_inline_html(bullet.group(1))}</li>")
+            continue
+        parts.append(f"<p>{_inline_html(line)}</p>")
+    body = "".join(parts)
+    body = re.sub(r"(<li>.*?</li>(?:\s*<li>.*?</li>)*)", r"<ul>\1</ul>", body)
+    return body
+
+
+def _inline_html(text: str) -> str:
+    """Escape, then render ``**bold**``, ``*italic*`` and ```code```."""
+    import html as _html
+
+    text = _html.escape(text)
+    text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+    return text
+
+
+def to_pdf(markdown: str, path: Path, title: str = "") -> Path:
+    """Render Markdown to a PDF with Qt's built-in writer (no extra deps).
+
+    Needs a running Qt GUI application; in headless processes one is created
+    on the offscreen platform.  The PDF is never smaller than one page, so a
+    one-line CV still opens to a proper sheet.
+    """
+    try:
+        from PySide6.QtGui import QGuiApplication, QPageSize, QPdfWriter, QTextDocument
+    except ImportError:  # pragma: no cover - dependency hint
+        raise RuntimeError("PySide6 is required for .pdf export") from None
+
+    if QGuiApplication.instance() is None:
+        import os
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QGuiApplication([])
+        app.setQuitOnLastWindowClosed(False)
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = QTextDocument()
+    document.setDefaultStyleSheet(
+        "body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a1a;}"
+        "h1{font-size:17pt;margin:2pt 0 10pt;}h2{font-size:13pt;margin:10pt 0 3pt;}"
+        "h3{font-size:11.5pt;margin:8pt 0 2pt;}h4{font-size:10.5pt;margin:6pt 0 2pt;}"
+        "ul{margin:2pt 0 6pt;padding-left:16pt;}")
+    document.setDocumentMargin(16)
+    if title:
+        document.setHtml(f"<html><head><title>{title}</title></head>"
+                         f"<body>{markdown_to_html(markdown)}</body></html>")
+    else:
+        document.setHtml(f"<html><body>{markdown_to_html(markdown)}</body></html>")
+
+    writer = QPdfWriter(str(path))
+    writer.setPageSize(QPageSize(QPageSize.A4))
+    writer.setResolution(150)
+    writer.setTitle(title or "Document")
+    document.print_(writer)
+    return path
+
+
 def _strip_inline(text: str) -> str:
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     return re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
@@ -807,11 +888,13 @@ def document_suffix(fmt: str) -> str:
         return ".md"
     if fmt in ("txt", "text"):
         return ".txt"
+    if fmt in ("pdf",):
+        return ".pdf"
     return ".docx"
 
 
 def export(markdown: str, path: Path, fmt: str = "docx", title: str = "") -> Path:
-    """Write ``markdown`` to ``path`` honouring ``fmt`` (docx|md|txt|markdown)."""
+    """Write ``markdown`` to ``path`` honouring ``fmt`` (docx|md|txt|pdf|markdown)."""
     fmt = (fmt or "docx").lower()
     path = Path(path)
     if fmt in ("md", "markdown"):
@@ -820,6 +903,9 @@ def export(markdown: str, path: Path, fmt: str = "docx", title: str = "") -> Pat
     elif fmt in ("txt", "text"):
         path = path.with_suffix(".txt")
         path.write_text(to_plain_text(markdown), encoding="utf-8")
+    elif fmt in ("pdf",):
+        path = path.with_suffix(".pdf")
+        to_pdf(markdown, path, title=title)
     else:
         path = path.with_suffix(".docx")
         to_docx(markdown, path, title=title)

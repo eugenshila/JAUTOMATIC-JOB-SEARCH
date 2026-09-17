@@ -82,6 +82,9 @@ class ApplicationsTab(QWidget):
         actions.addWidget(th.button("Export calendar (.ics)", "ghost",
                                     "Interviews and follow-ups for Google/Outlook/Apple Calendar",
                                     self._export_calendar))
+        actions.addWidget(th.button("Preview auto-clear", "ghost",
+                                    "Dry run: show which untouched applications the next "
+                                    "sweep would archive (nothing is changed)", self._preview_auto_clear))
         actions.addStretch(1)
         self.count_label = th.label("", "small")
         actions.addWidget(self.count_label)
@@ -464,6 +467,48 @@ class ApplicationsTab(QWidget):
         self.refresh()
         self.ctx.tabs["dashboard"].refresh()
         self.ctx.update_meta()
+
+    def _preview_auto_clear(self) -> None:
+        """Dry run: report (and optionally run) the auto-clear sweep."""
+        settings = self.ctx.settings
+        if settings.auto_clear_days <= 0:
+            self.ctx.notify("Auto-clear is off (0 days) in Settings → Autopilot. Enable it "
+                            "first, then preview what the sweep would archive.", "warning")
+            return
+
+        def work():
+            pending = self.ctx.pipeline.pending_auto_clear(self.ctx.profile)
+            rows = []
+            for app in pending:
+                job = self.ctx.workspace.get_job(app.job_id)
+                rows.append((job.title if job else "?", job.company if job else "?"))
+            return rows
+
+        def done(rows) -> None:
+            if not rows:
+                self.ctx.notify(
+                    f"Nothing to auto-clear: no untouched application is older than "
+                    f"{settings.auto_clear_days} day(s).", "info")
+                return
+            days = settings.auto_clear_days
+            names = ", ".join(f"“{t}” at {c}" for t, c in rows[:4])
+            if len(rows) > 4:
+                names += f" (+{len(rows) - 4} more)"
+            if self.ctx.confirm(
+                    f"Auto-clear preview — {len(rows)} would be archived",
+                    f"{names}\n\nUntouched = discovered or shortlisted and never prepared or "
+                    f"sent. These are {days} day(s) old and would be archived (kept in the "
+                    f"database and history, not deleted) on the next sweep. Run it now?",
+                    danger=True):
+                self.ctx.run_task(
+                    "Auto-clearing", lambda: self.ctx.pipeline.auto_clear_unacted(self.ctx.profile),
+                    lambda moved: (self.refresh(),
+                                   self.ctx.tabs["dashboard"].refresh(),
+                                   self.ctx.update_meta(),
+                                   self.ctx.notify(
+                                       f"Archived {moved} untouched application(s).", "success")))
+
+        self.ctx.run_task("Checking auto-clear", work, done)
 
     def _recompute(self) -> None:
         def done(updated) -> None:
