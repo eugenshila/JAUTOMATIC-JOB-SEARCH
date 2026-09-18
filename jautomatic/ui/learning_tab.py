@@ -83,13 +83,26 @@ class LearningTab(QWidget):
         item = self.saved_list.currentItem()
         return item.data(32) if item else None
 
+    def _sync_profile(self) -> None:
+        profile = self.ctx.reload_profile()
+        existing = {skill.strip().casefold() for skill in profile.skills if skill.strip()}
+        changed = False
+        for course in self.store.completed_courses():
+            skill = course.title.strip()
+            if skill and skill.casefold() not in existing:
+                profile.skills.append(skill)
+                existing.add(skill.casefold())
+                changed = True
+        if changed:
+            self.ctx.save_profile(profile)
+
     def update_status(self) -> None:
         course = self._selected()
         if not course: return
         course.status = self.status.currentText()
         if course.completed: course.mark_completed(course.completed_on or None)
-        self.store.update(course); self._refresh_saved()
-        self.message.setPlainText("Completed learning is now available to the profile/CV integration.")
+        self.store.update(course); self._sync_profile(); self._refresh_saved()
+        self.message.setPlainText("Completed learning has been added to your profile skills.")
 
     def attach_certificate(self) -> None:
         course = self._selected()
@@ -97,8 +110,8 @@ class LearningTab(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Attach certificate", "", "Certificates (*.pdf *.jpg *.jpeg *.png)")
         if not path: return
         try:
-            self.store.attach_certificate(course.id, path); self._refresh_saved()
-            self.message.setPlainText("Certificate saved and course marked completed.")
+            self.store.attach_certificate(course.id, path); self._sync_profile(); self._refresh_saved()
+            self.message.setPlainText("Certificate saved, course marked completed, and profile updated.")
         except (OSError, ValueError, KeyError) as exc: QMessageBox.warning(self, "Certificate", str(exc))
 
     def open_link(self) -> None:
