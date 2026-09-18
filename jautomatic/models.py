@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 APP_NAME = "JAUTOMATIC"
 APP_SLUG = "jautomatic-job-search"
@@ -84,13 +85,20 @@ def unique_document_path(directory: str | Path, stem: str, suffix: str, *,
     directory = Path(directory)
     if reuse:
         return Path(reuse)
+    def occupied(path: Path) -> bool:
+        # Word/PDF exports may share a stem as a pair. Reserve both names so
+        # an unrelated Word-only document cannot be overwritten by a new pair.
+        if path.suffix in (".pdf", ".docx"):
+            return any(path.with_suffix(ext).exists() for ext in (".pdf", ".docx"))
+        return path.exists()
+
     candidate = directory / f"{stem}{suffix}"
-    if not candidate.exists():
+    if not occupied(candidate):
         return candidate
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:4]
     candidate = directory / f"{stem}-{digest}{suffix}"
     counter = 2
-    while candidate.exists():
+    while occupied(candidate):
         candidate = directory / f"{stem}-{digest}-{counter}{suffix}"
         counter += 1
     return candidate
@@ -375,6 +383,11 @@ class JobPosting:
         keeps a tracker entry (and its documents) attached to the same job.
         """
         url = self.url.strip().lower().split("?")[0].rstrip("/")
+        identifiers = sorted((key.lower(), value) for key, value in parse_qsl(urlsplit(self.url).query)
+                             if key.lower() in {"id", "jobid", "job_id", "jk", "gh_jid",
+                                                "requisitionid", "requisition_id", "job"})
+        if identifiers:
+            url += "?" + urlencode(identifiers)
         if url:
             raw = url
         else:
@@ -771,10 +784,18 @@ class Application:
 # --------------------------------------------------------------------------- #
 # settings
 # --------------------------------------------------------------------------- #
+REGIONAL_SOURCE_NAMES = ["myjobmag_ke", "myjobmag_ng", "myjobmag_za",
+                         "jobweb_ke", "jobweb_ug", "jobweb_tz", "jooble_uae"]
+DEFAULT_SOURCE_NAMES = ["remotive", "arbeitnow", "remoteok", "himalayas", *REGIONAL_SOURCE_NAMES]
+
+
 @dataclass
 class AppSettings:
     data_dir: str = ""
-    enabled_sources: list[str] = field(default_factory=lambda: ["remotive", "arbeitnow", "remoteok"])
+    enabled_sources: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCE_NAMES))
+    source_catalog_version: int = 2
+    jooble_uae_key: str = ""
+    last_search_location: str | None = None
     results_per_source: int = 25
     request_timeout: int = 15
     autopilot: bool = False               # auto-prepare materials for top matches
@@ -787,18 +808,19 @@ class AppSettings:
     include_cover_letter: bool = True
     include_email_draft: bool = True
     cv_template: str = "modern"           # modern | classic | compact
-    export_format: str = "docx"           # docx | pdf | md | txt
+    export_format: str = "docx"           # docx | pdf | docx_pdf | md | txt
     min_salary: int = 0
-    min_match_score: int = 70               # results below this match score are hidden (0 = off)
+    min_match_score: int = 70               # qualification bar; results stay visible for review
     auto_track_qualified: bool = True       # search results at/above min_match_score go to the queue
     min_pay_usd: int = 10                   # Tasks search: only gigs advertising >= this per task (0 = off)
     remote_only: bool = False
     exclude_keywords: str = ""            # comma separated, filters out postings
-    theme: str = "midnight"
+    theme: str = "blackgreen"
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
     adzuna_country: str = "gb"
     last_search_query: str = ""
+    last_search_job_ids: list[str] | None = None  # None means no saved search yet
     auto_refresh_enabled: bool = False    # timed re-scrape of the enabled boards
     auto_refresh_minutes: int = 30        # every N minutes when enabled
     notify_new_matches: bool = True       # tray/desktop alert when a refresh finds fresh roles
@@ -829,7 +851,17 @@ class AppSettings:
         data = data or {}
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         payload = {k: v for k, v in data.items() if k in known}
-        payload["enabled_sources"] = [str(s) for s in payload.get("enabled_sources") or []]
+        if "last_search_job_ids" in payload:
+            ids = payload["last_search_job_ids"]
+            payload["last_search_job_ids"] = ([str(job_id) for job_id in ids]
+                                               if isinstance(ids, list) else None)
+        selected = payload.get("enabled_sources", DEFAULT_SOURCE_NAMES)
+        payload["enabled_sources"] = [str(s) for s in selected] if isinstance(selected, list) else list(DEFAULT_SOURCE_NAMES)
+        if data.get("source_catalog_version") != 2:
+            # Expand the old three-board default once; preserve custom/offline selections.
+            if set(payload["enabled_sources"]) == {"remotive", "arbeitnow", "remoteok"}:
+                payload["enabled_sources"] = list(DEFAULT_SOURCE_NAMES)
+        payload["source_catalog_version"] = 2
         for key in ("results_per_source", "request_timeout", "autopilot_min_score",
                     "autopilot_max_per_run", "follow_up_days", "follow_up_repeat_days",
                     "follow_up_max_nudges", "auto_clear_days",
@@ -884,6 +916,7 @@ class Workspace:
         self.exports_dir.mkdir(parents=True, exist_ok=True)
         self.templates_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self.recovery_notices: list[str] = []
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -965,6 +998,14 @@ class Workspace:
         for job in jobs:
             existing = cursor.execute("SELECT job_id FROM jobs WHERE fingerprint=?",
                                       (job.fingerprint,)).fetchone()
+            if not existing and "?" in job.url:
+                old_url = job.url.strip().lower().split("?")[0].rstrip("/")
+                old_hash = hashlib.sha1(old_url.encode("utf-8")).hexdigest()
+                legacy = cursor.execute("SELECT * FROM jobs WHERE fingerprint=?", (old_hash,)).fetchone()
+                if legacy and self._row_to_job(legacy).fingerprint == job.fingerprint:
+                    cursor.execute("UPDATE jobs SET fingerprint=? WHERE job_id=?",
+                                   (job.fingerprint, legacy["job_id"]))
+                    existing = legacy
             if existing:
                 cursor.execute(
                     """UPDATE jobs SET title=?, company=?, location=?, remote=?, salary_min=?,
@@ -1115,32 +1156,36 @@ class Workspace:
         }
 
     # -- profile & settings ------------------------------------------------ #
+    @synchronized
     def load_profile(self) -> Profile:
-        if self.profile_path.exists():
-            try:
-                return Profile.from_dict(json.loads(self.profile_path.read_text("utf-8")))
-            except (json.JSONDecodeError, OSError, TypeError):
-                pass
-        return Profile()
+        from .services.data_safety import load_json
+        return load_json(self.profile_path, Profile.from_dict, self.recovery_notices)
 
+    @synchronized
     def save_profile(self, profile: Profile) -> None:
-        self.profile_path.write_text(json.dumps(profile.to_dict(), indent=2), encoding="utf-8")
+        from .services.data_safety import atomic_json
+        atomic_json(self.profile_path, profile.to_dict())
 
+    @synchronized
     def load_settings(self) -> AppSettings:
-        if self.settings_path.exists():
-            try:
-                settings = AppSettings.from_dict(json.loads(self.settings_path.read_text("utf-8")))
-            except (json.JSONDecodeError, OSError, TypeError):
-                settings = AppSettings()
-        else:
-            settings = AppSettings()
+        from .services.data_safety import load_json
+        settings = load_json(self.settings_path,
+                             lambda data: AppSettings.from_dict(data) if data else AppSettings(),
+                             self.recovery_notices)
         if not settings.data_dir:
             settings.data_dir = str(self.root)
         return settings
 
+    @synchronized
     def save_settings(self, settings: AppSettings) -> None:
+        from .services.data_safety import atomic_json
         settings.data_dir = settings.data_dir or str(self.root)
-        self.settings_path.write_text(json.dumps(settings.to_dict(), indent=2), encoding="utf-8")
+        atomic_json(self.settings_path, settings.to_dict())
+
+    @synchronized
+    def backup_to(self, parent: Path) -> Path:
+        from .services.data_safety import backup_workspace
+        return backup_workspace(self, parent)
 
     @synchronized
     def close(self) -> None:

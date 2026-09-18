@@ -48,7 +48,9 @@ class GuiBootTest(unittest.TestCase):
                 self.app.processEvents()
                 self.assertIn(APP_TITLE, window.windowTitle())
                 self.assertIn(__version__, window.windowTitle())
-                self.assertEqual(len(window.tabs), 7)
+                self.assertEqual(len(window.tabs), 9)
+                self.assertIn("sent", window.tabs)
+                self.assertIn("archive", window.tabs)
                 self.assertTrue(window.status_label.text())
             finally:
                 window.close()
@@ -112,7 +114,8 @@ class GuiBootTest(unittest.TestCase):
                 window.save_settings(window.settings)
                 nothing = run(window, "supply chain")
                 self.assertEqual(nothing.ranked, [])
-                self.assertIn("Adzuna", nothing.result_summary.text())
+                self.assertIn("Africa + UAE logistics", nothing.result_summary.text())
+                self.assertIn("Jooble key", nothing.result_summary.text())
             finally:
                 window.close()
                 self.app.processEvents()
@@ -126,6 +129,36 @@ class GuiBootTest(unittest.TestCase):
             head = path.read_bytes()[:5]
             self.assertEqual(head, b"%PDF-")
             self.assertGreater(path.stat().st_size, 2000)
+
+    def test_pdf_and_word_export_preserves_multipage_text(self):
+        from docx import Document
+        from PySide6.QtCore import QBuffer, QIODevice
+        from PySide6.QtPdf import QPdfDocument
+
+        from jautomatic.services.cv_generator import export
+        markdown = "# Zoë García\n\n" + "\n\n".join(
+            f"## Experience {i}\nDelivered accessible services for international customers."
+            for i in range(55)) + "\n\nFinal content marker"
+        with tempfile.TemporaryDirectory(prefix="jautomatic-paired-") as tmp:
+            for name in ("cv", "letter"):
+                path = export(markdown, Path(tmp) / name, "docx_pdf")
+                self.assertEqual(path.suffix, ".pdf")
+                word = Document(str(path.with_suffix(".docx")))
+                self.assertEqual(word.paragraphs[-1].text, "Final content marker")
+                pdf = QPdfDocument(self.app)
+                buffer = QBuffer()
+                buffer.setData(path.read_bytes())
+                buffer.open(QIODevice.ReadOnly)
+                try:
+                    pdf.load(buffer)
+                    self.assertEqual(pdf.error(), QPdfDocument.Error.None_)
+                    self.assertGreater(pdf.pageCount(), 1)
+                    text = "".join(pdf.getAllText(i).text() for i in range(pdf.pageCount()))
+                    self.assertIn("Zoë", text)
+                    self.assertIn("Final content marker", text)
+                finally:
+                    pdf.close()
+                    buffer.close()
 
     def test_search_done_handles_the_qualified_result(self):
         from jautomatic.models import SAMPLE_PROFILE, Profile
@@ -322,8 +355,9 @@ class GuiBootTest(unittest.TestCase):
                 stored = window.workspace.get_job(apps[0].job_id)
                 self.assertEqual(stored.title, "Pastry Engineer")
                 self.assertEqual(stored.source, "manual")
-                # the app auto-navigates to applications after importing
-                self.assertEqual(window._active_key, "applications")
+                # Imported jobs remain visible in the search interface.
+                self.assertEqual(window._active_key, "search")
+                self.assertTrue(any(job.job_id == stored.job_id for job, _ in tab.ranked))
             finally:
                 window.close()
                 self.app.processEvents()
@@ -349,11 +383,10 @@ class GuiBootTest(unittest.TestCase):
                 self.app.processEvents()
 
     def test_background_refresh_reports_fresh_postings(self):
-        import types
         from unittest import mock
 
         from jautomatic.models import JobPosting
-        from jautomatic.services.job_scraper import JobScraper
+        from jautomatic.services.job_scraper import JobScraper, SearchOutcome
 
         with tempfile.TemporaryDirectory(prefix="jautomatic-gui-boot-") as tmp:
             window = MainWindow(data_dir=tmp)
@@ -365,7 +398,7 @@ class GuiBootTest(unittest.TestCase):
                     location="Remote", remote=True, salary_min=50000, salary_max=70000,
                     currency="USD", url="https://example.com/fresh", description="New band",
                     tags=["python"], posted_at="2026-09-16")
-                outcome = types.SimpleNamespace(jobs=[posting], errors=[])
+                outcome = SearchOutcome(jobs=[posting])
                 window.settings.notify_new_matches = False
                 with mock.patch.object(JobScraper, "search", return_value=outcome):
                     window.background_refresh()
@@ -374,14 +407,15 @@ class GuiBootTest(unittest.TestCase):
                         "the background refresh must report its outcome")
                 self.assertIn("1 new", window._background_notes[0])
                 self.assertNotIn("New roles found", window._background_notes[0])
-                # only AFTER the first batch the desktop alert is requested again
+                # Repeated results are saved and must not trigger a new-match alert.
                 window.settings.notify_new_matches = True
                 with mock.patch.object(JobScraper, "search", return_value=outcome):
                     window.background_refresh()
                     self.assertTrue(
-                        self._wait_until(lambda: any("New roles found" in note
-                                                     for note in window._background_notes)),
-                        "the new-match alert must fire")
+                        self._wait_until(lambda: len(window._background_notes) >= 2),
+                        "the repeated refresh must complete")
+                self.assertIn("0 new", window._background_notes[1])
+                self.assertFalse(any("New roles found" in note for note in window._background_notes))
                 self.assertEqual(window.tabs["search"].outcome.jobs, [posting])
             finally:
                 window.close()

@@ -467,6 +467,9 @@ class PipelineTests(WorkspaceTestCase):
         self.assertTrue(path.exists())
         self.assertIn("Following up", text)
         self.assertIn("Northwind Analytics", text)
+        stored = self.workspace.get_application(application.application_id)
+        self.assertEqual(stored.follow_up_count, 0)
+        self.assertEqual(stored.follow_up_at, application.follow_up_at)
 
     def test_postponing_follow_up_clears_dueness(self):
         row = self._tracked()
@@ -485,6 +488,7 @@ class PipelineTests(WorkspaceTestCase):
         self.workspace.save_application(application)
 
         first_path, first_text = self.pipeline.draft_follow_up(application)
+        self.pipeline.mark_follow_up_sent(application)
         stored = self.workspace.get_application(application.application_id)
         self.assertEqual(stored.follow_up_count, 1)
         self.assertIn("Following up", first_text)
@@ -492,15 +496,23 @@ class PipelineTests(WorkspaceTestCase):
                          (date.today() + timedelta(days=5)).isoformat())
 
         stored.follow_up_at = (date.today() - timedelta(days=1)).isoformat()
+        for event in stored.history:
+            if event.get("event") == "follow-up sent":
+                event["at"] = (date.today() - timedelta(days=5)).isoformat()
         self.workspace.save_application(stored)
         second_path, second_text = self.pipeline.draft_follow_up(stored)
+        self.pipeline.mark_follow_up_sent(stored)
         self.assertIn("Still interested", second_text)
         self.assertNotEqual(first_path.name, second_path.name)
 
         stored = self.workspace.get_application(application.application_id)
         stored.follow_up_at = (date.today() - timedelta(days=1)).isoformat()
+        for event in stored.history:
+            if event.get("event") == "follow-up sent":
+                event["at"] = (date.today() - timedelta(days=5)).isoformat()
         self.workspace.save_application(stored)
         third_path, third_text = self.pipeline.draft_follow_up(stored)
+        self.pipeline.mark_follow_up_sent(stored)
         self.assertIn("last follow-up", third_text)
         finished = self.workspace.get_application(application.application_id)
         self.assertEqual(finished.follow_up_count, 3)
@@ -722,7 +734,8 @@ class OllamaCoverLetterTests(WorkspaceTestCase):
                 self.profile, self.job, MatchContext(), "professional",
                 llm={"model": "llama3.2", "base_url": "http://localhost:11434", "timeout": 60})
         draft.assert_called_once()
-        self.assertEqual(document.text, "An AI letter.\n")
+        self.assertTrue(document.text.endswith("An AI letter.\n"))
+        self.assertTrue(document.text.startswith("# Alex Doe\n"))
         self.assertEqual(document.warning, "")
 
     def test_generate_falls_back_to_template_on_ollama_error(self):
@@ -747,7 +760,8 @@ class OllamaCoverLetterTests(WorkspaceTestCase):
                         return_value="Local-model letter body.\n") as draft:
             materials = self.pipeline.prepare(row.application, self.profile)
         draft.assert_called_once()
-        self.assertEqual(materials.cover_letter.text, "Local-model letter body.\n")
+        self.assertTrue(materials.cover_letter.text.endswith("Local-model letter body.\n"))
+        self.assertTrue(materials.cover_letter.text.startswith("# Alex Doe\n"))
         self.assertTrue(materials.cover_letter.path.exists())
         self.assertEqual(materials.cover_letter.warning, "")
 

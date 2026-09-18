@@ -40,6 +40,7 @@ from .calendar_export import build_calendar, events_for, parse_when
 from .cover_letter import CoverLetterService, MatchContext
 from .cv_generator import CVGenerator, GeneratedDocument
 from .email_drafter import EmailDrafter, render_follow_up
+from .eligibility import currencies_match, remote_location_fit
 from .interview_prep import InterviewPrep, export_prep, generate_questions
 from .job_scraper import JobScraper, SearchOutcome, SearchQuery
 
@@ -61,6 +62,7 @@ class MatchResult:
     reasons: list[str] = field(default_factory=list)
     salary_fit: bool = True
     location_fit: bool = True
+    needs_review: bool = False
 
     @property
     def grade(self) -> str:
@@ -140,12 +142,23 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
 
     # location / remote
     locations = [l.lower() for l in profile.desired_locations if l.strip()]
-    if job.remote and (profile.remote_only or not locations):
-        result.score += W_LOCATION
-        result.reasons.append("remote-friendly and you are open to remote")
+    if job.remote:
+        location_fit = remote_location_fit(profile.location, job.location)
+        if location_fit is True:
+            result.score += W_LOCATION
+            result.reasons.append(f"remote location fits ({job.display_location})")
+        elif location_fit is False:
+            result.location_fit = False
+            result.reasons.append(f"remote location restriction does not fit your current location ({job.location})")
+        else:
+            result.needs_review = True
+            result.reasons.append("remote location eligibility is unconfirmed - check the employer's restrictions")
+    elif profile.remote_only:
+        result.location_fit = False
+        result.reasons.append("on-site posting does not meet your remote-only preference")
     elif locations:
-        hay = f"{job.location} {job.company}".lower()
-        if any(loc in hay for loc in locations) or job.remote:
+        hay = job.location.lower()
+        if any(loc in hay for loc in locations):
             result.score += W_LOCATION
             result.reasons.append(f"location fits ({job.display_location})")
         else:
@@ -161,6 +174,10 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
         result.score += round(W_SALARY * 0.5)
         if floor and not ceiling:
             result.reasons.append("salary not disclosed - check the range early")
+    elif not currencies_match(profile.currency, job.currency):
+        result.needs_review = True
+        result.reasons.append(f"salary needs review: cannot compare {job.currency or 'unknown currency'} "
+                              f"with your {profile.currency or 'unknown currency'} floor")
     elif ceiling >= floor:
         result.score += W_SALARY
         if job.salary_min and job.salary_min >= floor:
@@ -191,6 +208,8 @@ def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
         result.reasons.append("none of the posting's headline requirements appear in your profile")
     if not result.location_fit or not result.salary_fit:
         cap = min(cap, 59)
+    if result.needs_review:
+        cap = min(cap, 69)
     result.score = max(0, min(cap, result.score))
     return result
 
@@ -289,6 +308,7 @@ class ApplicationPipeline:
             text=text, location=location,
             remote_only=overrides.get("remote_only", settings.remote_only),
             min_salary=overrides.get("min_salary", settings.min_salary),
+            salary_currency=self.workspace.load_profile().currency,
             limit_per_source=overrides.get("limit_per_source", settings.results_per_source),
             sources=overrides.get("sources", settings.enabled_sources),
             exclude_keywords=settings.excluded_keyword_list,
@@ -557,6 +577,40 @@ class ApplicationPipeline:
         materials.application = self.workspace.save_application(record)
         return materials
 
+    def prepare_outlook_draft(self, application: Application, profile: Profile | None = None):
+        """Reuse reviewed documents and generate only missing attachments."""
+        from .email_drafter import render_email
+        from .outlook_draft import write_message
+
+        profile = profile or self.workspace.load_profile()
+        record = self.workspace.get_application(application.application_id)
+        if record is None:
+            raise ValueError("This application is no longer in the tracker.")
+        job = self.workspace.get_job(record.job_id)
+        if job is None:
+            raise ValueError("The job posting is no longer available.")
+        match = match_job(profile, job, self.settings)
+        if not record.cv_path or not Path(record.cv_path).is_file():
+            document = self.cv_generator.generate(profile, job, self.settings.cv_template,
+                self.workspace.documents_dir, self.settings.export_format, match)
+            if not document.path:
+                raise RuntimeError("Could not generate the CV attachment.")
+            record.cv_path = str(document.path)
+        if not record.cover_letter_path or not Path(record.cover_letter_path).is_file():
+            document = self.cover_letters.generate(profile, job, match.as_context(), profile.tone,
+                self.workspace.documents_dir, self.settings.export_format)
+            if not document.path:
+                raise RuntimeError("Could not generate the cover-letter attachment.")
+            record.cover_letter_path = str(document.path)
+        self.workspace.save_application(record)
+        attachments = [Path(record.cv_path), Path(record.cover_letter_path)]
+        draft = render_email(profile, job, match_job(profile, job, self.settings).as_context(),
+                             attachments=[str(p) for p in attachments])
+        draft.recipient = ""
+        path = self.workspace.documents_dir / f"Outlook_{record.application_id}.eml"
+        write_message(draft, attachments, path)
+        return draft, attachments, path
+
     def prepare_batch(self, rows: list[TrackedApplication], profile: Profile | None = None,
                       should_cancel=None, **kwargs) -> list[PreparedMaterials]:
         out: list[PreparedMaterials] = []
@@ -592,14 +646,9 @@ class ApplicationPipeline:
 
     def draft_follow_up(self, application: Application | str,
                         fmt: str | None = None) -> tuple[Path, str]:
-        """Draft the *next* rung of the follow-up ladder (escalating tone).
-
-        Drafting advances the ladder: the next nudge is scheduled after
-        ``follow_up_repeat_days`` (or, once ``follow_up_max_nudges`` was
-        reached, the series ends and the application stops being "due").
-        """
-        record = (self.workspace.get_application(application)
-                  if isinstance(application, str) else application)
+        """Draft the next follow-up without advancing or dismissing its reminder."""
+        record = self.workspace.get_application(
+            application if isinstance(application, str) else application.application_id)
         if record is None:
             raise KeyError(f"unknown application: {application}")
         job = self.workspace.get_job(record.job_id)
@@ -616,19 +665,37 @@ class ApplicationPipeline:
                                          fmt=fmt or self.settings.export_format,
                                          level=level, max_nudges=max_nudges)
 
-        rung = level + 1
+        record.log("follow-up drafted", f"nudge #{level + 1}; awaiting manual send confirmation")
+        self.workspace.save_application(record)
+        return document.path, draft.text
+
+    def mark_follow_up_sent(self, application: Application | str) -> Application:
+        """Record the user's send confirmation; repeated clicks today are idempotent."""
+        record = self.workspace.get_application(
+            application if isinstance(application, str) else application.application_id)
+        if record is None:
+            raise KeyError(f"unknown application: {application}")
+        if record.status_enum not in (ApplicationStatus.SENT, ApplicationStatus.INTERVIEW):
+            raise ValueError("Follow-ups can only be marked sent for sent applications or interviews.")
+        if any(event.get("event") == "follow-up sent" and parse_date(event.get("at")) == date.today()
+               for event in record.history):
+            return record
+        max_nudges = max(0, int(self.settings.follow_up_max_nudges or 0))
+        if max_nudges and record.follow_up_count >= max_nudges:
+            return record
+        rung = record.follow_up_count + 1
         record.follow_up_count = rung
+        record.log("follow-up sent", f"nudge #{rung} confirmed sent by user")
         final = bool(max_nudges) and rung >= max_nudges
         if final:
             record.follow_up_at = ""
-            record.log("follow-up series complete", f"nudge #{rung} of {max_nudges} drafted")
+            record.log("follow-up series complete", f"nudge #{rung} of {max_nudges} sent")
         else:
             repeat = max(1, int(self.settings.follow_up_repeat_days
                                 or self.settings.follow_up_days or 5))
             record.schedule_follow_up(repeat)
-            record.log("follow-up drafted", f"nudge #{rung} of the ladder - next in {repeat} day(s)")
-        self.workspace.save_application(record)
-        return document.path, draft.text
+            record.log("follow-up scheduled", f"next in {repeat} day(s)")
+        return self.workspace.save_application(record)
 
     def postpone_follow_up(self, application: Application, days: int = 5) -> Application:
         application.schedule_follow_up(days)

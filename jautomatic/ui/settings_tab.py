@@ -1,7 +1,6 @@
 """Settings tab: sources, search defaults, documents, autopilot, data & theme."""
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -22,7 +21,8 @@ from ..models import AppSettings
 from ..services.cv_generator import template_label
 from . import theme as th
 
-FORMATS = [("Microsoft Word (.docx)", "docx"), ("PDF (.pdf)", "pdf"),
+FORMATS = [("PDF + editable Word", "docx_pdf"),
+           ("Microsoft Word (.docx)", "docx"), ("PDF (.pdf)", "pdf"),
            ("Markdown (.md)", "md"), ("Plain text (.txt)", "txt")]
 
 
@@ -88,6 +88,19 @@ class SettingsTab(QWidget):
         credentials.addRow("Adzuna app key", self.adzuna_key)
         credentials.addRow("Adzuna country", self.adzuna_country)
         sources.add_layout(credentials)
+        self.jooble_uae_key = QLineEdit()
+        self.jooble_uae_key.setEchoMode(QLineEdit.Password)
+        self.jooble_uae_key.setPlaceholderText("Key from ae.jooble.org/api/about")
+        self.jooble_uae_key.textChanged.connect(self._mark_dirty)
+        jooble_form = QFormLayout()
+        jooble_form.addRow("Jooble UAE API key", self.jooble_uae_key)
+        sources.add_layout(jooble_form)
+        sources.add(th.button("Get a UAE Jooble API key", "ghost", "Open the official key request page",
+                              lambda: th.open_in_browser("https://ae.jooble.org/api/about")))
+        sources.add(th.label("MyJobMag and JobWeb African feeds need no key. Jooble UAE "
+                             "requires a UAE-specific key (a US key will not work). "
+                             "Jooble currently limits free keys to 500 lifetime requests; "
+                             "automatic refresh also uses this quota.", "small", wrap=True))
         sources.add(th.label("Adzuna is optional — Remotive, Arbeitnow, RemoteOK, Himalayas "
                              "and UAE AI jobs need no key. Register free at "
                              "developer.adzuna.com.", "small", wrap=True))
@@ -103,9 +116,9 @@ class SettingsTab(QWidget):
         self.linkedin_easy_apply.toggled.connect(self._mark_dirty)
         linkedin.add(self.linkedin_easy_apply)
         linkedin.add(th.label(
-            "Browse the results and paste any job's URL into the search tab's *Track from "
-            "URL* box — the app stores the posting, keeps the apply hyperlink and lets you "
-            "prep a tailored CV, cover letter and e-mail for it.", "small", wrap=True))
+            "Browse using your existing browser login, then paste the URL into Track from URL. "
+            "If LinkedIn blocks the page, use Paste job details to copy its title, employer, "
+            "location and description. No LinkedIn password is stored in this app.", "small", wrap=True))
         left.addWidget(linkedin)
 
         # search defaults ------------------------------------------------ #
@@ -123,9 +136,9 @@ class SettingsTab(QWidget):
         self.min_salary.setGroupSeparatorShown(True)
         self.min_match_score = QSpinBox()
         self.min_match_score.setRange(0, 100)
-        self.min_match_score.setSuffix(" / 100")
-        self.min_match_score.setToolTip("Results below this match score are hidden "
-                                        "from the search table (0 = off)")
+        self.min_match_score.setSuffix("%")
+        self.min_match_score.setToolTip("Profile-match target for eligibility and automatic queuing. "
+                                        "Default: 70%. Lower matches remain available for review.")
         self.remote_only = QCheckBox("Remote postings only")
         self.exclude_keywords = QLineEdit()
         self.exclude_keywords.setPlaceholderText("unpaid, commission only, crypto, doordash")
@@ -163,6 +176,10 @@ class SettingsTab(QWidget):
         form.addRow("", self.with_cover_letter)
         form.addRow("", self.with_email)
         documents.add_layout(form)
+        documents.add(th.label(
+            "CVs and cover letters use matching Segoe UI typography. Choose PDF + editable "
+            "Word to save both versions; the PDF is used in your application tracker.",
+            "small", wrap=True))
         template_row = QHBoxLayout()
         template_row.setSpacing(6)
         template_row.addWidget(th.button("Preview the selected template", "default", "",
@@ -318,6 +335,8 @@ class SettingsTab(QWidget):
                                 lambda: th.open_in_file_manager(self.ctx.workspace.documents_dir)))
         row.addWidget(th.button("Backup data folder…", "default", "Copy everything to a folder",
                                 self._backup))
+        row.addWidget(th.button("Restore backup…", "default", "Restore a verified backup to a new folder",
+                                self._restore_backup))
         data.add_layout(row)
         row_two = QHBoxLayout()
         row_two.addWidget(th.button("Export tracker CSV", "ghost", "", self._export_csv))
@@ -368,6 +387,7 @@ class SettingsTab(QWidget):
         self.adzuna_id.setText(settings.adzuna_app_id)
         self.adzuna_key.setText(settings.adzuna_app_key)
         self.adzuna_country.setCurrentText(settings.adzuna_country)
+        self.jooble_uae_key.setText(settings.jooble_uae_key)
         self.results_per_source.setValue(settings.results_per_source)
         self.timeout.setValue(settings.request_timeout)
         self.min_salary.setValue(settings.min_salary)
@@ -413,6 +433,7 @@ class SettingsTab(QWidget):
         settings.adzuna_app_id = self.adzuna_id.text().strip()
         settings.adzuna_app_key = self.adzuna_key.text().strip()
         settings.adzuna_country = self.adzuna_country.currentText().strip() or "gb"
+        settings.jooble_uae_key = self.jooble_uae_key.text().strip()
         settings.results_per_source = self.results_per_source.value()
         settings.request_timeout = self.timeout.value()
         settings.min_salary = self.min_salary.value()
@@ -465,7 +486,7 @@ class SettingsTab(QWidget):
         self.ctx.run_task("Testing the Ollama connection", work, done, failed)
 
     def _apply_theme(self) -> None:
-        name = self.theme_combo.currentData() or "midnight"
+        name = self.theme_combo.currentData() or th.DEFAULT_THEME
         settings = self.collect()
         settings.theme = name
         self.ctx.save_settings(settings)
@@ -566,17 +587,16 @@ class SettingsTab(QWidget):
         target = QFileDialog.getExistingDirectory(self, "Choose a folder for the backup")
         if not target:
             return
-        destination = Path(target) / f"jautomatic-backup-{self.ctx.workspace.root.name}"
-        try:
-            if destination.exists():
-                shutil.rmtree(destination)
-            shutil.copytree(self.ctx.workspace.root, destination,
-                            ignore=shutil.ignore_patterns("*.wal", "*.shm", "__pycache__"))
-        except OSError as exc:
-            self.ctx.notify(f"Backup failed: {exc}", "error")
+        if self.ctx.busy:
+            self.ctx.notify("Wait for the current task to finish before backing up.", "warning")
             return
-        self.ctx.notify(f"Backed up to {destination}", "success")
-        th.open_in_file_manager(destination)
+
+        def done(destination) -> None:
+            self.ctx.notify(f"Verified backup saved to {destination}", "success")
+            th.open_in_file_manager(destination)
+
+        self.ctx.run_task("Backing up your workspace",
+                          lambda: self.ctx.workspace.backup_to(Path(target)), done)
 
     def _clear(self) -> None:
         if not self.ctx.confirm("Clear job cache",
@@ -586,6 +606,30 @@ class SettingsTab(QWidget):
         self.ctx.workspace.clear_jobs()
         self.ctx.notify("Job cache and tracker cleared.", "info")
         self.ctx.refresh_all()
+
+    def _restore_backup(self) -> None:
+        from uuid import uuid4
+
+        from ..services.data_safety import restore_backup
+
+        if self.ctx.busy:
+            self.ctx.notify("Wait for the current task to finish before restoring.", "warning")
+            return
+        source = QFileDialog.getExistingDirectory(self, "Choose a JAUTOMATIC backup folder")
+        if not source:
+            return
+        parent = QFileDialog.getExistingDirectory(self, "Choose where to create the restored folder")
+        if not parent:
+            return
+        destination = Path(parent) / f"jautomatic-restored-{uuid4().hex[:8]}"
+
+        def done(path) -> None:
+            self.ctx.notify(f"Restored to {path}. Your current workspace is unchanged. "
+                            "Open the restored workspace using --data-dir with this folder.", "success")
+            th.open_in_file_manager(path)
+
+        self.ctx.run_task("Verifying and restoring backup",
+                          lambda: restore_backup(Path(source), destination), done)
 
 
 __all__ = ["FORMATS", "SettingsTab"]

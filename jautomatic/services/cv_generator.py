@@ -742,34 +742,62 @@ def to_plain_text(markdown: str) -> str:
     return text.strip() + "\n"
 
 
+DOCUMENT_FONT = "Segoe UI"
+_pdf_app = None  # Keep the headless QApplication alive across repeated exports.
+_pdf_fonts_loaded = False
+
+
 def to_docx(markdown: str, path: Path, title: str = "") -> Path:
     """Minimal Markdown -> .docx converter (headings, bullets, bold)."""
     try:
         from docx import Document
-        from docx.shared import Pt
+        from docx.shared import Mm, Pt, RGBColor
     except ImportError:  # pragma: no cover - dependency hint
         raise RuntimeError("python-docx is required for .docx export "
                            "(pip install -r requirements.txt)") from None
 
     document = Document()
     style = document.styles["Normal"]
-    style.font.name = "Calibri"
+    section = document.sections[0]
+    section.page_width, section.page_height = Mm(210), Mm(297)
+    section.top_margin = section.bottom_margin = Mm(18)
+    section.left_margin = section.right_margin = Mm(20)
+    style.font.name = DOCUMENT_FONT
     style.font.size = Pt(10.5)
+    style.font.color.rgb = RGBColor.from_string("242424")
+    style.paragraph_format.space_after = Pt(6)
+    style.paragraph_format.line_spacing = 1.12
+    style.paragraph_format.widow_control = True
+    for name, size, before, after in (
+        ("Title", 26, 0, 6), ("Heading 1", 12, 12, 5),
+        ("Heading 2", 11, 8, 3), ("Heading 3", 10.5, 6, 3),
+        ("Heading 4", 10.5, 6, 3),
+    ):
+        heading_style = document.styles[name]
+        heading_style.font.name = DOCUMENT_FONT
+        heading_style.font.size = Pt(size)
+        heading_style.font.bold = True
+        heading_style.font.color.rgb = RGBColor(0, 0, 0)
+        heading_style.paragraph_format.space_before = Pt(before)
+        heading_style.paragraph_format.space_after = Pt(after)
+        heading_style.paragraph_format.keep_with_next = True
+    bullet_style = document.styles["List Bullet"]
+    bullet_style.paragraph_format.space_after = Pt(3)
     if title:
         document.core_properties.title = title
 
     for raw in markdown.splitlines():
         line = raw.rstrip()
         if not line.strip():
-            document.add_paragraph()
             continue
         if line.strip() in ("---", "***"):
-            document.add_paragraph("_" * 40)
             continue
         heading = re.match(r"^(#{1,6})\s*(.*)$", line)
         if heading:
             level = min(len(heading.group(1)), 4)
-            document.add_heading(_strip_inline(heading.group(2)), level=level)
+            paragraph = document.add_paragraph(
+                style="Title" if level == 1 else f"Heading {level - 1}")
+            _add_rich(paragraph, heading.group(2))
             continue
         bullet = re.match(r"^\s*[-*]\s+(.*)$", line)
         if bullet:
@@ -784,13 +812,11 @@ def to_docx(markdown: str, path: Path, title: str = "") -> Path:
 
 def markdown_to_html(markdown: str) -> str:
     """Minimal Markdown -> HTML body (headings, bullets, bold, rules)."""
-    import html as _html
 
     parts: list[str] = []
     for raw in markdown.splitlines():
         line = raw.rstrip()
         if not line.strip():
-            parts.append("<p></p>")
             continue
         if line.strip() in ("---", "***"):
             parts.append("<hr/>")
@@ -829,36 +855,61 @@ def to_pdf(markdown: str, path: Path, title: str = "") -> Path:
     one-line CV still opens to a proper sheet.
     """
     try:
-        from PySide6.QtGui import QGuiApplication, QPageSize, QPdfWriter, QTextDocument
-    except ImportError:  # pragma: no cover - dependency hint
-        raise RuntimeError("PySide6 is required for .pdf export") from None
+        from PySide6.QtCore import QMarginsF, QSizeF
+        from PySide6.QtGui import (
+            QFont,
+            QFontDatabase,
+            QPageLayout,
+            QPageSize,
+            QPdfWriter,
+            QTextDocument,
+        )
+        from PySide6.QtWidgets import QApplication
+    except ImportError as exc:  # pragma: no cover - dependency hint
+        raise RuntimeError(f"PDF export could not load Qt: {exc}") from exc
 
-    if QGuiApplication.instance() is None:
-        import os
+    import os
 
+    global _pdf_app, _pdf_fonts_loaded
+    if QApplication.instance() is None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        app = QGuiApplication([])
-        app.setQuitOnLastWindowClosed(False)
+        _pdf_app = QApplication([])
+        _pdf_app.setQuitOnLastWindowClosed(False)
+
+    # The offscreen Windows platform does not discover system fonts.
+    if os.name == "nt" and not _pdf_fonts_loaded:
+        fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+        for name in ("segoeui.ttf", "segoeuib.ttf", "segoeuii.ttf", "segoeuiz.ttf"):
+            if (fonts / name).exists():
+                QFontDatabase.addApplicationFont(str(fonts / name))
+        _pdf_fonts_loaded = True
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = QTextDocument()
+    font = QFont(DOCUMENT_FONT)
+    font.setPointSizeF(10.5)
+    document.setDefaultFont(font)
     document.setDefaultStyleSheet(
-        "body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a1a;}"
-        "h1{font-size:17pt;margin:2pt 0 10pt;}h2{font-size:13pt;margin:10pt 0 3pt;}"
-        "h3{font-size:11.5pt;margin:8pt 0 2pt;}h4{font-size:10.5pt;margin:6pt 0 2pt;}"
-        "ul{margin:2pt 0 6pt;padding-left:16pt;}")
-    document.setDocumentMargin(16)
-    if title:
-        document.setHtml(f"<html><head><title>{title}</title></head>"
-                         f"<body>{markdown_to_html(markdown)}</body></html>")
-    else:
-        document.setHtml(f"<html><body>{markdown_to_html(markdown)}</body></html>")
+        "body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#242424;}"
+        "h1{font-size:26pt;color:#000000;margin-top:0px;margin-bottom:8px;}"
+        "h2{font-size:12pt;color:#000000;margin-top:16px;margin-bottom:7px;}"
+        "h3{font-size:11pt;color:#000000;margin-top:10px;margin-bottom:4px;}"
+        "h4{font-size:10.5pt;color:#000000;margin-top:8px;margin-bottom:4px;}"
+        "p{margin-top:0px;margin-bottom:8px;line-height:112%;}"
+        "li{margin-bottom:4px;}ul{margin-top:3px;margin-bottom:8px;}")
+    document.setDocumentMargin(0)
+    body = markdown_to_html(markdown).replace("<hr/>", "")
+    document.setHtml(f"<html><body>{body}</body></html>")
 
     writer = QPdfWriter(str(path))
     writer.setPageSize(QPageSize(QPageSize.A4))
+    writer.setPageMargins(QMarginsF(20, 18, 20, 18), QPageLayout.Millimeter)
     writer.setResolution(150)
     writer.setTitle(title or "Document")
+    # Explicit pagination prevents print_ from adding another 2 cm margin.
+    document.documentLayout().setPaintDevice(writer)
+    document.setPageSize(QSizeF(writer.width(), writer.height()))
     document.print_(writer)
     return path
 
@@ -888,7 +939,7 @@ def document_suffix(fmt: str) -> str:
         return ".md"
     if fmt in ("txt", "text"):
         return ".txt"
-    if fmt in ("pdf",):
+    if fmt in ("pdf", "docx_pdf"):
         return ".pdf"
     return ".docx"
 
@@ -903,8 +954,10 @@ def export(markdown: str, path: Path, fmt: str = "docx", title: str = "") -> Pat
     elif fmt in ("txt", "text"):
         path = path.with_suffix(".txt")
         path.write_text(to_plain_text(markdown), encoding="utf-8")
-    elif fmt in ("pdf",):
+    elif fmt in ("pdf", "docx_pdf"):
         path = path.with_suffix(".pdf")
+        if fmt == "docx_pdf":
+            to_docx(markdown, path.with_suffix(".docx"), title=title)
         to_pdf(markdown, path, title=title)
     else:
         path = path.with_suffix(".docx")

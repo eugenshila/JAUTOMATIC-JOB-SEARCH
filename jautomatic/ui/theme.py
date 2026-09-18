@@ -40,19 +40,20 @@ PALETTES: dict[str, dict[str, str]] = {
         "danger": "#cf3b52", "info": "#1f7fd0", "shadow": "rgba(23,32,51,60)",
     },
     "blackgreen": {
-        "bg": "#050b07", "surface": "#0c1711", "surface_alt": "#132219",
-        "surface_hi": "#1a3324", "border": "#2c5a3e", "text": "#e9f7ef",
-        "muted": "#9fb8ab", "accent": "#34e573", "accent_text": "#03150a",
+        "bg": "#080c0b", "surface": "#101714", "surface_alt": "#17211c",
+        "surface_hi": "#20382b", "border": "#293b31", "text": "#eff8f2",
+        "muted": "#a1b5a8", "accent": "#52e094", "accent_text": "#082115",
         "success": "#3ddc85", "warning": "#f0a93b", "danger": "#ef5f70",
         "info": "#38c7b8", "shadow": "rgba(0,0,0,200)",
     },
 }
-DEFAULT_THEME = "midnight"
+DEFAULT_THEME = "blackgreen"
 
 QSS = """
 * { font-family: "%(font)s"; outline: none; }
 QWidget { color: %(text)s; font-size: 13px; }
 QMainWindow, QDialog { background: %(bg)s; }
+QWidget#SearchContent { background: %(bg)s; }
 QToolTip { background: %(surface_hi)s; color: %(text)s; border: 1px solid %(border)s;
     padding: 6px 10px; border-radius: 6px; font-size: 12px; }
 
@@ -62,14 +63,14 @@ QToolTip { background: %(surface_hi)s; color: %(text)s; border: 1px solid %(bord
 #SidebarFooter { color: %(muted)s; font-size: 11px; }
 
 QPushButton#NavButton {
-    text-align: left; padding: 10px 16px; border: none; border-radius: 9px;
+    text-align: left; padding: 13px 16px; border: none; border-radius: 10px;
     color: %(muted)s; font-size: 13px; font-weight: 600; background: transparent;
 }
 QPushButton#NavButton:hover { background: %(surface_alt)s; color: %(text)s; }
-QPushButton#NavButton:checked { background: %(surface_hi)s; color: %(text)s;
+QPushButton#NavButton:checked { background: %(surface_hi)s; color: %(accent)s;
     border-left: 3px solid %(accent)s; }
 
-#PageTitle { font-size: 22px; font-weight: 800; }
+#PageTitle { font-size: 27px; font-weight: 800; }
 #PageSubtitle { color: %(muted)s; font-size: 12px; }
 #SectionTitle { font-size: 15px; font-weight: 700; }
 #Muted { color: %(muted)s; }
@@ -78,6 +79,13 @@ QPushButton#NavButton:checked { background: %(surface_hi)s; color: %(text)s;
 
 QFrame#Card { background: %(surface)s; border: 1px solid %(border)s; border-radius: 14px; }
 QFrame#AccentCard { background: %(surface_alt)s; border: 1px solid %(accent)s; border-radius: 14px; }
+QFrame#SearchHero { background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+    stop:0 %(surface_hi)s, stop:1 %(surface)s); border: 1px solid %(border)s; border-radius: 18px; }
+QLabel#Eyebrow { color: %(accent)s; font-size: 11px; font-weight: 700; letter-spacing: 2px; }
+QLabel#MatchBadge { background: %(surface_hi)s; color: %(accent)s; border-radius: 8px;
+    padding: 7px 12px; font-weight: 700; }
+QTextBrowser { background: %(surface)s; border: none; padding: 6px; }
+QScrollArea { background: transparent; border: none; }
 QFrame#Toast { border-radius: 10px; padding: 2px; }
 QLabel#StatValue { font-size: 24px; font-weight: 800; }
 QLabel#StatLabel { color: %(muted)s; font-size: 11px; letter-spacing: 1px; }
@@ -85,7 +93,7 @@ QLabel#Chip { border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight
 
 QPushButton {
     background: %(surface_alt)s; border: 1px solid %(border)s; border-radius: 9px;
-    padding: 7px 15px; font-weight: 600; color: %(text)s;
+    padding: 9px 15px; font-weight: 600; color: %(text)s;
 }
 QPushButton:hover { background: %(surface_hi)s; border-color: %(accent)s; }
 QPushButton:pressed { background: %(surface)s; border-color: %(accent)s; }
@@ -176,6 +184,7 @@ QListWidget::item:selected { background: %(surface_hi)s; }
 """
 
 GLYPHS = {
+    "sent": "✓", "archive": "▣",
     "dashboard": "▤", "profile": "☰", "search": "⌕", "tasks": "◈", "applications": "✉",
     "insights": "∑", "settings": "⚙", "check": "✔", "cross": "✖", "info": "ℹ", "warn": "⚠",
     "refresh": "↻", "add": "＋", "open": "↗", "save": "✔", "send": "➤",
@@ -337,7 +346,7 @@ class Card(QFrame):
                 sub.setObjectName("Small")
                 sub.setWordWrap(True)
                 box.addWidget(sub)
-            self.header.addLayout(box)
+            self.header.addLayout(box, 1)
         self.header.addStretch(1)
         root.addLayout(self.header)
         self.body = QVBoxLayout()

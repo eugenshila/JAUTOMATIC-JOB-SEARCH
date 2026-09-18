@@ -258,6 +258,8 @@ class DashboardTab(QWidget):
                                         lambda _=False, r=row: self._draft_follow_up(r)))
             buttons.addWidget(th.button("Postpone 5 days", "ghost", "",
                                         lambda _=False, r=row: self._postpone(r)))
+            buttons.addWidget(th.button("Mark sent", "default", "Record a follow-up you sent",
+                                        lambda _=False, r=row: self._follow_up_sent(r)))
             buttons.addStretch(1)
             box.addLayout(buttons)
             self.follow_list.addWidget(container)
@@ -336,6 +338,16 @@ class DashboardTab(QWidget):
         self.ctx.pipeline.postpone_follow_up(row.application, 5)
         self.ctx.notify(f"Follow-up for {row.title} moved out by 5 days.", "info")
         self.refresh()
+
+    def _follow_up_sent(self, row: TrackedApplication) -> None:
+        try:
+            self.ctx.pipeline.mark_follow_up_sent(row.application)
+        except ValueError as exc:
+            self.ctx.notify(str(exc), "warning")
+            return
+        self.refresh()
+        self.ctx.tabs["applications"].refresh()
+        self.ctx.notify("Follow-up recorded as sent; reminders updated.", "success")
 
     def _quick_search(self) -> None:
         self.ctx.go_to("search")

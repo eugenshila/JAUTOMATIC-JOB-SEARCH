@@ -54,7 +54,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=str(ROOT / "docs" / "screenshots"))
     parser.add_argument("--data-dir", default=None)
-    parser.add_argument("--theme", default="midnight", choices=["midnight", "daylight"],
+    parser.add_argument("--theme", default="blackgreen", choices=["midnight", "blackgreen", "daylight"],
                         help="theme used for the captures")
     parser.add_argument("--extra", action="store_true",
                         help="also capture the light theme + a preview dialog")

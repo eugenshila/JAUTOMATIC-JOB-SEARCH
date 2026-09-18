@@ -433,6 +433,7 @@ class PostingFromUrlTests(unittest.TestCase):
           <title>Senior Python Engineer - Northwind Analytics | LinkedIn</title>
           <meta property="og:title" content="Senior Python Engineer - Northwind Analytics | LinkedIn">
           <meta property="og:site_name" content="Northwind Analytics">
+          <meta property="og:description" content="Build Python services and data pipelines.">
         </head><body></body></html>
         """
         job, _ = self._fetch(page, "https://www.linkedin.com/jobs/view/1234567")

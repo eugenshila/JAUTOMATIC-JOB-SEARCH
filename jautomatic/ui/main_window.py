@@ -60,7 +60,9 @@ NAV_ITEMS = [
     ("profile", "Profile", "Who you are, what you want"),
     ("search", "Job search", "Find and score openings"),
     ("tasks", "Tasks", "Microtasks & gigs with a minimum-pay filter"),
-    ("applications", "Applications", "Materials, tracking, follow-ups"),
+    ("applications", "Applications", "Prepare applications before sending"),
+    ("sent", "Sent", "Sent applications, follow-ups and interview preparation"),
+    ("archive", "Archive", "Regrets, archived applications and permanent deletion"),
     ("insights", "Insights", "Trends, response times, market demand"),
     ("settings", "Settings", "Sources, documents, data"),
 ]
@@ -149,6 +151,8 @@ class MainWindow(QMainWindow):
         self.go_to("dashboard")
         self._run_startup_maintenance()
         self._setup_tray()
+        if self.workspace.recovery_notices:
+            self.notify(" ".join(self.workspace.recovery_notices), "warning")
 
     # ------------------------------------------------------------------ UI #
     def _build_ui(self) -> None:
@@ -172,6 +176,8 @@ class MainWindow(QMainWindow):
             "search": JobSearchTab(self),
             "tasks": TasksTab(self),
             "applications": ApplicationsTab(self),
+            "sent": ApplicationsTab(self, "sent"),
+            "archive": ApplicationsTab(self, "archive"),
             "insights": AnalyticsTab(self),
             "settings": SettingsTab(self),
         }
@@ -402,6 +408,8 @@ class MainWindow(QMainWindow):
         # The settings form rebuilds an AppSettings from its widgets, so it
         # would silently drop the window geometry — carry it over instead.
         settings.window_geometry = self.settings.window_geometry or settings.window_geometry
+        if settings.last_search_job_ids is None:
+            settings.last_search_job_ids = self.settings.last_search_job_ids
         self.settings = settings
         self.workspace.save_settings(settings)
         self.pipeline.settings = settings
@@ -492,7 +500,9 @@ class MainWindow(QMainWindow):
         settings = self.settings
         query = settings.last_search_query or (
             profile.desired_titles[0] if profile.desired_titles else "python")
-        location = profile.desired_locations[0] if profile.desired_locations else ""
+        location = settings.last_search_location
+        if location is None:
+            location = profile.desired_locations[0] if profile.desired_locations else ""
         job_query = self.pipeline.build_query(
             query, location, sources=settings.enabled_sources,
             remote_only=settings.remote_only, min_salary=settings.min_salary,
@@ -510,9 +520,9 @@ class MainWindow(QMainWindow):
                 self.notify(f"Auto-cleared {cleared} untouched application(s) older than "
                             f"{settings.auto_clear_days} day(s).", "info")
             search_tab = self.tabs.get("search")
+            known = {job.fingerprint for job in self.workspace.jobs()}
             if search_tab is not None and hasattr(search_tab, "show_result_outcome"):
                 search_tab.show_result_outcome(outcome)
-            known = {job.fingerprint for job in self.workspace.jobs()}
             fresh = [job for job in outcome.jobs if job.fingerprint not in known]
             self._background_notes.append(
                 f"{len(outcome.jobs)} posting(s), {len(fresh)} new, "

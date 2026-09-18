@@ -46,6 +46,15 @@ def _wxs_tree(path):
 
 
 class BuildInfoTest(unittest.TestCase):
+    def test_product_code_is_stable_per_version_and_changes_for_upgrade(self):
+        current = build_info.product_code("1.5.0")
+        self.assertEqual(current, build_info.product_code("1.5.0"))
+        self.assertNotEqual(current, build_info.product_code("1.4.0"))
+        uuid.UUID(current)
+        package = _wxs_tree(PACKAGING / "jautomatic.wxs").getroot().find(
+            "w:Package", {"w": build_info.WIX_NAMESPACE})
+        self.assertEqual(package.get("ProductCode"), "$(var.ProductCode)")
+
     def test_wix_pin_has_release_shape(self):
         self.assertRegex(build_info.WIX_VERSION, r"^\d+\.\d+\.\d+$")
 

@@ -7,12 +7,28 @@ from datetime import date
 from pathlib import Path
 
 from jautomatic.models import SAMPLE_PROFILE, JobPosting, Profile
-from jautomatic.services.cover_letter import (CoverLetterService, MatchContext, TONES,
-                                              render_cover_letter, top_keywords_from_job)
-from jautomatic.services.cv_generator import (CVGenerator, TEMPLATES, export, render_markdown,
-                                              to_docx, to_plain_text)
-from jautomatic.services.email_drafter import (EmailDrafter, build_subject, guess_recipient,
-                                               render_email, render_follow_up)
+from jautomatic.services.cover_letter import (
+    TONES,
+    CoverLetterService,
+    MatchContext,
+    render_cover_letter,
+    top_keywords_from_job,
+)
+from jautomatic.services.cv_generator import (
+    TEMPLATES,
+    CVGenerator,
+    export,
+    render_markdown,
+    to_docx,
+    to_plain_text,
+)
+from jautomatic.services.email_drafter import (
+    EmailDrafter,
+    build_subject,
+    guess_recipient,
+    render_email,
+    render_follow_up,
+)
 
 
 def profile() -> Profile:
@@ -98,12 +114,24 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("Alex Doe", text)
             self.assertIn("Owned the platform", text)
             self.assertEqual(document.core_properties.title, "CV")
+            self.assertEqual(document.styles["Normal"].font.name, "Segoe UI")
+            self.assertEqual(document.paragraphs[0].style.name, "Title")
+            self.assertFalse(any(not p.text for p in document.paragraphs))
 
     def test_export_switches_suffix(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = export("Hello **world**", Path(tmp) / "file.doc", "md")
             self.assertEqual(path.suffix, ".md")
             self.assertTrue(path.exists())
+
+    def test_word_and_pdf_names_are_reserved_together(self):
+        from jautomatic.models import unique_document_path
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "CV_alex.docx"
+            original.write_bytes(b"existing application")
+            candidate = unique_document_path(tmp, "CV_alex", ".pdf", key="different role")
+            self.assertNotEqual(candidate.stem, original.stem)
+            self.assertEqual(original.read_bytes(), b"existing application")
 
 
 class CoverLetterTests(unittest.TestCase):
@@ -146,6 +174,11 @@ class CoverLetterTests(unittest.TestCase):
                                                      Path(tmp), "docx")
             self.assertTrue(document.path.exists())
             self.assertEqual(document.kind, "cover_letter")
+            from docx import Document
+            letter = Document(str(document.path))
+            self.assertEqual(letter.paragraphs[0].text, profile().display_name)
+            self.assertEqual(letter.paragraphs[0].style.name, "Title")
+            self.assertIn("Application for Senior Python Engineer", document.text)
 
     def test_top_keywords_prefer_tags(self):
         words = top_keywords_from_job(job(), limit=5)

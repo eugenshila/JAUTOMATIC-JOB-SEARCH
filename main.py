@@ -50,7 +50,7 @@ def run_selftest(data_dir: str | None = None) -> int:
     profile = Profile.from_dict(SAMPLE_PROFILE)
     workspace.save_profile(profile)
     pipeline = ApplicationPipeline(workspace, workspace.load_settings())
-    pipeline.settings.export_format = "docx"
+    pipeline.settings.export_format = "docx_pdf"
     pipeline.workspace.save_settings(pipeline.settings)
 
     outcome = pipeline.search("python", sources=["sample"], limit_per_source=5)
@@ -65,6 +65,10 @@ def run_selftest(data_dir: str | None = None) -> int:
     for document in (materials.cv, materials.cover_letter, materials.email):
         assert document is not None and document.text.strip(), "a document came out empty"
     assert materials.cv.path and materials.cv.path.exists(), "CV file was not written"
+    for document in (materials.cv, materials.cover_letter):
+        assert document.path.suffix == ".pdf", "PDF must be the tracked attachment"
+        assert document.path.read_bytes().startswith(b"%PDF-"), "PDF export invalid"
+        assert document.path.with_suffix(".docx").exists(), "Editable Word copy missing"
 
     pipeline.set_status(materials.application, "sent", "selftest")
     draft_path, draft_text = pipeline.draft_follow_up(materials.application)
@@ -170,6 +174,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception:  # noqa: BLE001 - last-resort guard so the window never dies silently
+        if args.selftest and args.data_dir:
+            error_path = Path(args.data_dir) / "selftest-error.log"
+            error_path.parent.mkdir(parents=True, exist_ok=True)
+            error_path.write_text(traceback.format_exc(), encoding="utf-8")
         traceback.print_exc()
         print("\nJAUTOMATIC crashed. Please re-run with --selftest to isolate the problem.",
               file=sys.stderr)

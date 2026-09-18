@@ -43,6 +43,7 @@ param(
     [switch]$SkipFreeze,
     [switch]$SkipPackage,
     [switch]$Sign,
+    [switch]$UseExistingEnvironment,
     [ValidateSet("x64")]
     [string]$Arch = "x64"
 )
@@ -130,7 +131,11 @@ function Invoke-Tests {
 }
 
 function Invoke-Freeze($Info) {
-    Ensure-Venv
+    if ($UseExistingEnvironment) {
+        if (-not (Test-Path $VenvPython)) { throw "No existing packaging environment: $VenvPython" }
+    } else {
+        Ensure-Venv
+    }
     if (-not $SkipTests) { Invoke-Tests }
 
     Write-Host "--> writing version resource"
@@ -261,9 +266,16 @@ function Invoke-Package($Info) {
     # so run both dotnet calls from the repo root however we were invoked.
     Push-Location $RepoRoot
     try {
-        Write-Host "--> restoring WiX $($Info.WIX_VERSION)"
-        Invoke-Logged -What "dotnet tool restore" -LogName "dotnet-tool-restore.log" -Run {
-            & dotnet tool restore
+        if ($UseExistingEnvironment) {
+            $actualWix = & dotnet wix --version
+            if ($LASTEXITCODE -ne 0 -or -not $actualWix.StartsWith($Info.WIX_VERSION + "+")) {
+                throw "Existing WiX tool does not match $($Info.WIX_VERSION)"
+            }
+        } else {
+            Write-Host "--> restoring WiX $($Info.WIX_VERSION)"
+            Invoke-Logged -What "dotnet tool restore" -LogName "dotnet-tool-restore.log" -Run {
+                & dotnet tool restore
+            }
         }
 
         # NOTE: -d values must not end in a backslash (it escapes the quote).
@@ -272,6 +284,7 @@ function Invoke-Package($Info) {
         Invoke-Logged -What "wix build" -LogName "wix-build.log" -Run {
             & dotnet wix build -arch $Arch `
                 -d "ProductVersion=$($Info.MSI_VERSION)" `
+                -d "ProductCode=$($Info.PRODUCT_CODE)" `
                 -d "FrozenDir=$FrozenDir" `
                 -d "IconPath=$IconPath" `
                 -out $msiPath `

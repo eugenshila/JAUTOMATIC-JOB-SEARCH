@@ -243,7 +243,7 @@ class InterviewPrepDialog(QDialog):
             self.status_line.setText(f"Question bank updated: {added} new question(s), "
                                      f"{len(prep.questions)} total.")
             self.ctx.notify(f"{added} new question(s) for {self.row.title}.", "success")
-            self.ctx.tabs["applications"].refresh()
+            self.ctx.tabs["sent"].refresh()
 
         self.ctx.run_task("Generating interview questions", work, done)
 
@@ -286,7 +286,7 @@ class InterviewPrepDialog(QDialog):
         self.status_line.setText("Saved.")
         if not quiet:
             self.ctx.notify("Interview prep saved.", "success")
-        self.ctx.tabs["applications"].refresh()
+        self.ctx.tabs["sent"].refresh()
 
     def _export(self) -> None:
         self.save(quiet=True)

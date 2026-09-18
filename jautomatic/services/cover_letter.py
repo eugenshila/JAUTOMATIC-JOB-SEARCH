@@ -213,7 +213,8 @@ def render_cover_letter(profile: Profile, job: JobPosting, match: MatchContext |
             paragraphs.append("Beyond that, I also bring "
                               + human_join([pretty_term(s) for s in extra[:5]]) + " to the team.")
 
-    if profile.salary_floor and job.salary_max:
+    if (profile.salary_floor and job.salary_max and profile.currency and job.currency
+            and profile.currency.upper() == job.currency.upper()):
         if job.salary_max < profile.salary_floor:
             paragraphs.append(
                 "For full transparency, my salary expectations start around "
@@ -357,6 +358,16 @@ class CoverLetterService:
                           "used the template instead."
         else:
             markdown = render_cover_letter(profile, job, match, tone)
+        contact = " | ".join(value.strip() for value in
+                             (profile.email, profile.phone, profile.location) if value.strip())
+        letterhead = [f"# {profile.display_name}"]
+        if profile.headline.strip():
+            letterhead.append(profile.headline.strip())
+        if contact:
+            letterhead.append(contact)
+        letterhead.extend([date.today().strftime("%d %B %Y"),
+                           f"## Application for {job.title}", job.company])
+        markdown = "\n\n".join(letterhead) + "\n\n" + markdown
         document = GeneratedDocument(
             kind="cover_letter", text=markdown, template=(tone or profile.tone or "professional"),
             used_keywords=list((match.matched_keywords if match else []) or [])[:10],

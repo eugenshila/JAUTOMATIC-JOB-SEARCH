@@ -26,6 +26,12 @@ from ..services.application_pipeline import TrackedApplication
 from . import theme as th
 
 COLUMNS = ["Status", "Score", "Role", "Company", "Follow-up", "Interview", "Docs", "Prep"]
+VIEW_STATUSES = {
+    "applications": (ApplicationStatus.DISCOVERED, ApplicationStatus.PROPOSED,
+                     ApplicationStatus.SHORTLISTED, ApplicationStatus.MATERIALS_READY),
+    "sent": (ApplicationStatus.SENT, ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER),
+    "archive": (ApplicationStatus.REJECTED, ApplicationStatus.ARCHIVED),
+}
 
 
 class ApplicationsTab(QWidget):
@@ -33,9 +39,16 @@ class ApplicationsTab(QWidget):
     page_subtitle = ("Every tracked posting — qualified and below-bar proposals — "
                      "its documents and the next action")
 
-    def __init__(self, ctx) -> None:
+    def __init__(self, ctx, view: str = "applications") -> None:
         super().__init__()
         self.ctx = ctx
+        self.view = view
+        self.statuses = VIEW_STATUSES[view]
+        self.page_title, self.page_subtitle = {
+            "applications": ("Applications", "Prepare applications, then mark them Sent once you apply"),
+            "sent": ("Sent", "Follow up on applications and prepare for interviews; mark regrets to archive them"),
+            "archive": ("Archive", "Regrets and archived applications — restore a status or delete permanently"),
+        }[view]
         self.rows: list[TrackedApplication] = []
         self._build_ui()
 
@@ -45,7 +58,7 @@ class ApplicationsTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        filters = th.Card("Filters", "Narrow the list; everything is stored locally in SQLite")
+        filters = th.Card("Filters", "Filter applications in this tab")
         row = QHBoxLayout()
         row.setSpacing(8)
         self.search_box = QLineEdit()
@@ -53,7 +66,7 @@ class ApplicationsTab(QWidget):
         self.search_box.textChanged.connect(self.refresh)
         self.status_filter = QComboBox()
         self.status_filter.addItem("All statuses", None)
-        for status in ApplicationStatus.ordered():
+        for status in self.statuses:
             self.status_filter.addItem(status.label, status.value)
         self.status_filter.currentIndexChanged.connect(self.refresh)
         self.min_score = QSpinBox()
@@ -62,14 +75,11 @@ class ApplicationsTab(QWidget):
         self.min_score.valueChanged.connect(self.refresh)
         self.due_only = QCheckBox("Follow-ups due only")
         self.due_only.toggled.connect(self.refresh)
-        self.active_only = QCheckBox("Hide rejected/archived")
-        self.active_only.setChecked(True)
-        self.active_only.toggled.connect(self.refresh)
         row.addWidget(self.search_box, 1)
         row.addWidget(self.status_filter)
         row.addWidget(self.min_score)
         row.addWidget(self.due_only)
-        row.addWidget(self.active_only)
+        self.due_only.setVisible(self.view == "sent")
         filters.add_layout(row)
 
         actions = QHBoxLayout()
@@ -90,6 +100,9 @@ class ApplicationsTab(QWidget):
         self.count_label = th.label("", "small")
         actions.addWidget(self.count_label)
         filters.add_layout(actions)
+        # Preparation and auto-clear belong to the unsent queue.
+        for index in (0, 1, 4):
+            actions.itemAt(index).widget().setVisible(self.view == "applications")
         layout.addWidget(filters)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -99,6 +112,8 @@ class ApplicationsTab(QWidget):
         table_card = th.Card("Tracked applications")
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
+        for column in (4, 5, 7):
+            self.table.setColumnHidden(column, self.view == "applications")
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -129,7 +144,8 @@ class ApplicationsTab(QWidget):
         status_row = QHBoxLayout()
         self.status_combo = QComboBox()
         for status in ApplicationStatus.ordered():
-            self.status_combo.addItem(status.label, status.value)
+            self.status_combo.addItem("Regret" if status is ApplicationStatus.REJECTED
+                                      else status.label, status.value)
         status_row.addWidget(th.label("Status", "muted"))
         status_row.addWidget(self.status_combo, 1)
         status_row.addWidget(th.button("Apply", "primary", "Update the status and log it",
@@ -145,17 +161,28 @@ class ApplicationsTab(QWidget):
         detail_card.add_layout(title_row)
         detail_card.add(self.detail_meta)
         detail_card.add_layout(status_row)
-        detail_card.add_layout(interview_row)
+        interview_controls = QWidget()
+        interview_controls.setLayout(interview_row)
+        detail_card.add(interview_controls)
+        interview_controls.setVisible(self.view == "sent")
 
-        detail_card.add(th.button("Generate materials", "primary",
+        self.generate_button = th.button("Generate materials", "primary",
                                   "Write a tailored CV, cover letter and e-mail draft",
-                                  self._prepare))
+                                  self._prepare)
+        detail_card.add(self.generate_button)
+        self.generate_button.setVisible(self.view == "applications")
+        self.outlook_button = th.button("Open Outlook draft", "primary",
+            "Fill the email and attach your CV and cover letter; enter the recipient in Outlook",
+            self._open_outlook_draft)
+        self.outlook_button.setVisible(self.view == "applications")
+        detail_card.add(self.outlook_button)
         documents = QHBoxLayout()
         documents.setSpacing(6)
         documents.addWidget(th.button("Open CV", "default", "", lambda: self._open_doc("cv")))
         documents.addWidget(th.button("Open letter", "default",
                                       "", lambda: self._open_doc("cover")))
         documents.addWidget(th.button("Open e-mail", "default", "", lambda: self._open_doc("email")))
+        documents.addWidget(th.button("Open posting", "ghost", "", self._open_posting))
         documents.addStretch(1)
         detail_card.add_layout(documents)
 
@@ -164,16 +191,29 @@ class ApplicationsTab(QWidget):
         follow_up.addWidget(th.button("Draft follow-up", "default",
                                       "Write a polite nudge e-mail", self._follow_up))
         follow_up.addWidget(th.button("Postpone 5 days", "ghost", "", self._postpone))
-        follow_up.addWidget(th.button("Open posting", "ghost", "", self._open_posting))
+        follow_up.addWidget(th.button("Mark follow-up sent", "default",
+                                      "Record a follow-up you have sent", self._follow_up_sent))
         follow_up.addStretch(1)
-        detail_card.add_layout(follow_up)
+        follow_up_controls = QWidget()
+        follow_up_controls.setLayout(follow_up)
+        detail_card.add(follow_up_controls)
+        follow_up_controls.setVisible(self.view == "sent")
 
         danger = QHBoxLayout()
-        danger.addWidget(th.button("Clear (can't apply)", "default",
+        self.archive_button = th.button("Archive", "default",
                                    "Archive this application — it leaves the active queue "
-                                   "but stays in the database/history", self._clear))
-        danger.addWidget(th.button("Delete permanently", "danger", "Remove from the tracker",
-                                   self._delete))
+                                   "but stays in the database/history", self._clear)
+        danger.addWidget(self.archive_button)
+        self.archive_button.setVisible(self.view != "archive")
+        self.regret_button = th.button("Regret", "default",
+                                       "Record a rejection and move this application to Archive",
+                                       self._regret)
+        danger.addWidget(self.regret_button)
+        self.regret_button.setVisible(self.view == "sent")
+        self.delete_button = th.button("Delete permanently", "danger", "Remove from the tracker",
+                                       self._delete)
+        danger.addWidget(self.delete_button)
+        self.delete_button.setVisible(self.view == "archive")
         danger.addStretch(1)
         detail_card.add_layout(danger)
 
@@ -181,9 +221,11 @@ class ApplicationsTab(QWidget):
         notes_row.addWidget(th.label("Notes", "title"), 1)
         self.prep_label = th.label("", "small")
         notes_row.addWidget(self.prep_label)
-        notes_row.addWidget(th.button("Interview prep", "default",
+        self.prep_button = th.button("Interview prep", "default",
                                       "Notes and a question bank derived from this posting "
-                                      "and your profile", self._interview_prep))
+                                      "and your profile", self._interview_prep)
+        notes_row.addWidget(self.prep_button)
+        self.prep_button.setVisible(self.view == "sent")
         detail_card.add_layout(notes_row)
         self.notes = QPlainTextEdit()
         self.notes.setPlaceholderText("Recruiter names, interview dates, salary talk, "
@@ -200,8 +242,12 @@ class ApplicationsTab(QWidget):
         splitter.addWidget(detail_card)
         splitter.setSizes([780, 500])
 
-        self.ctx.add_header_action("applications", th.button("Generate materials", "primary", "",
-                                             self._prepare))
+        if self.view == "applications":
+            self.ctx.add_header_action(self.view, th.button("Generate materials", "primary", "",
+                                                            self._prepare))
+        elif self.view == "sent":
+            self.ctx.add_header_action(self.view, th.button("Interview prep", "primary", "",
+                                                            self._interview_prep))
 
     # ------------------------------------------------------------- refresh #
     def refresh(self) -> None:
@@ -217,12 +263,11 @@ class ApplicationsTab(QWidget):
         status = self.status_filter.currentData()
         min_score = self.min_score.value()
         due_only = self.due_only.isChecked()
-        active_only = self.active_only.isChecked()
         filtered: list[TrackedApplication] = []
         for row in rows:
-            if status and row.application.status != status:
+            if row.status not in self.statuses:
                 continue
-            if active_only and row.status.is_closed and not due_only:
+            if status and row.application.status != status:
                 continue
             if row.score < min_score:
                 continue
@@ -238,6 +283,8 @@ class ApplicationsTab(QWidget):
         return filtered
 
     def _fill_table(self, selected_id: str | None) -> None:
+        self.table.blockSignals(True)
+        self.table.clearSelection()
         self.table.setRowCount(len(self.rows))
         select_row = 0
         for index, row in enumerate(self.rows):
@@ -271,8 +318,10 @@ class ApplicationsTab(QWidget):
             if selected_id and app.application_id == selected_id:
                 select_row = index
         self.table.resizeRowsToContents()
+        self.table.blockSignals(False)
         if self.rows:
             self.table.selectRow(select_row)
+            self._show_selected()
         else:
             self._clear_detail()
 
@@ -361,9 +410,16 @@ class ApplicationsTab(QWidget):
         self.ctx.pipeline.set_status(row.application, status,
                                     f"set from the tracker ({status.label})")
         self.ctx.notify(f"{row.title} → {status.label}", "success")
-        self.refresh()
-        self.ctx.tabs["dashboard"].refresh()
-        self.ctx.update_meta()
+        self.ctx.refresh_all()
+
+    def _regret(self) -> None:
+        row = self._current()
+        if row is None:
+            return
+        self.ctx.pipeline.set_status(row.application, ApplicationStatus.REJECTED,
+                                    "regret received — moved to Archive")
+        self.ctx.refresh_all()
+        self.ctx.notify(f"{row.title} moved to Archive (regret).", "success")
 
     def _prepare(self) -> None:
         row = self._current()
@@ -384,6 +440,36 @@ class ApplicationsTab(QWidget):
                 self.ctx.open_preview(f"CV · {row.title}", materials.cv.text, materials.cv.path)
 
         self.ctx.run_task(f"Generating materials for {row.title}", work, done)
+
+    def _open_outlook_draft(self) -> None:
+        row = self._current()
+        if row is None or not self.outlook_button.isEnabled():
+            return
+        from ..services.outlook_draft import open_message
+        self.outlook_button.setEnabled(False)
+
+        def work():
+            draft, attachments, path = self.ctx.pipeline.prepare_outlook_draft(
+                row.application, self.ctx.profile)
+            return open_message(draft, attachments, path)
+
+        def done(mode):
+            self.outlook_button.setEnabled(True)
+            self.refresh()
+            self.ctx.tabs["dashboard"].refresh()
+            message = "Outlook draft opened with CV and cover letter. Enter the recipient and send when ready."
+            if mode == "new":
+                message = ("Opened the prepared email in New Outlook with CV and cover letter. "
+                           "If it opens read-only, use Forward to edit it. Enter the recipient and send when ready.")
+            if mode == "eml":
+                message = ("Email file opened with CV and cover letter. Choose Outlook if Windows asks. "
+                           "If it opens read-only, use Forward to edit it. Enter the recipient and send when ready.")
+            self.ctx.notify(message + " Then mark the application Sent here.", "success")
+
+        def failed(message):
+            self.outlook_button.setEnabled(True)
+
+        self.ctx.run_task(f"Opening an Outlook draft for {row.title}", work, done, failed)
 
     def _open_doc(self, kind: str) -> None:
         row = self._current()
@@ -426,6 +512,19 @@ class ApplicationsTab(QWidget):
         self.refresh()
         self.ctx.notify("Follow-up postponed by 5 days.", "info")
 
+    def _follow_up_sent(self) -> None:
+        row = self._current()
+        if row is None:
+            return
+        try:
+            self.ctx.pipeline.mark_follow_up_sent(row.application)
+        except ValueError as exc:
+            self.ctx.notify(str(exc), "warning")
+            return
+        self.refresh()
+        self.ctx.tabs["dashboard"].refresh()
+        self.ctx.notify("Follow-up recorded as sent; reminders updated.", "success")
+
     def _open_posting(self) -> None:
         row = self._current()
         if row is None:
@@ -445,16 +544,18 @@ class ApplicationsTab(QWidget):
 
     def _delete(self) -> None:
         row = self._current()
-        if row is None:
+        if row is None or self.view != "archive" or not row.status.is_closed:
             return
         if not self.ctx.confirm("Delete permanently",
                                 f"Remove “{row.title}” at {row.company} from the tracker "
                                 "for good? Generated documents stay on disk.", danger=True):
             return
+        for dialog in list(getattr(self.ctx, "_previews", [])):
+            if getattr(dialog, "application_id", None) == row.application.application_id:
+                dialog.close()
         self.ctx.workspace.delete_application(row.application.application_id)
         self.ctx.notify("Application removed.", "info")
-        self.refresh()
-        self.ctx.update_meta()
+        self.ctx.refresh_all()
 
     def _clear(self) -> None:
         row = self._current()
@@ -464,10 +565,8 @@ class ApplicationsTab(QWidget):
             self.ctx.notify("This application is already archived.", "info")
             return
         self.ctx.pipeline.clear_application(row.application)
-        self.ctx.notify(f"{row.title} cleared from the queue.", "success")
-        self.refresh()
-        self.ctx.tabs["dashboard"].refresh()
-        self.ctx.update_meta()
+        self.ctx.notify(f"{row.title} moved to Archive.", "success")
+        self.ctx.refresh_all()
 
     def _preview_auto_clear(self) -> None:
         """Dry run: report (and optionally run) the auto-clear sweep."""

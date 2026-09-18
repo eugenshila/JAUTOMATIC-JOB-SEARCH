@@ -11,7 +11,7 @@ files on your machine.
 ```
 ┌────────────┐   ┌───────────────┐   ┌──────────────────┐   ┌───────────────────┐
 │ job boards │ → │ match & rank  │ → │ CV / letter /    │ → │ tracker, follow-  │
-│ (4 sources)│   │ (0-100 score) │   │ e-mail generator │   │ ups, CSV + .ics   │
+│ (multi-site)│  │ (0-100 score) │   │ e-mail generator │   │ ups, CSV + .ics   │
 └────────────┘   └───────────────┘   └──────────────────┘   └───────────────────┘
 ```
 
@@ -31,10 +31,30 @@ exclude keywords. Results are de-duplicated across boards, ranked by match score
 with the reasons behind each score ("pay band clears your floor", "title matches your target
 role", …). One click generates the whole application pack.
 
-**Applications** — a real tracker: status pipeline (discovered → shortlisted → materials
-ready → sent → interview → offer, plus rejected/archived), score, documents 3/3 indicator,
-follow-up date with a due warning, an interview date/time field, notes, interview-prep
-progress, and a full event history per application.
+**Applications** — prepare unsent jobs, review scores and documents, and keep notes.
+After applying, choose **Sent** and click **Apply** to move the record to **Sent**.
+
+**Open Outlook draft** — select an application and click this button to fill a
+tailored email subject and body and attach its CV and cover letter. Missing documents
+are generated automatically; existing files (including your edits) are reused.
+The recipient stays blank for you to enter, review and send. Then mark the application
+Sent in the tracker. The app does not send email or detect delivery.
+
+When installed, New Outlook is opened directly through its Windows launcher, using
+your existing configured account and an `.eml` file with the body and attachments.
+Otherwise, classic Outlook opens a saved compose draft and needs a configured mail
+account. If neither is detected, Windows opens the `.eml` file through its file
+association; choose Outlook when prompted.
+New Outlook versions may open it read-only: use **Forward** to make it editable.
+The portable draft remains in your workspace's documents folder.
+
+**Sent** — sent applications, interviews and offers, with follow-up reminders,
+interview dates and **Interview prep** materials. Click **Regret** when rejected:
+the application moves to **Archive** and follow-up reminders stop.
+
+**Archive** — regrets and archived jobs retain their notes, documents and history.
+Change the status to restore a record, or choose **Delete permanently** and confirm
+to remove it from the tracker. Generated document files remain on disk.
 
 **Interview prep** — every application has its own prep sheet: free-text notes (company
 research, interviewer names, logistics) plus a question bank *derived from that posting*:
@@ -162,6 +182,17 @@ are not auto-queued for applications — instead they appear on the **Applicatio
 **Proposed**, where you can review and promote them (promotion is automatic once a profile
 edit pushes them over the bar).
 
+**Job Search keeps every returned result visible**, with a percentage match and an
+Eligible / Below target label. Use **Eligible only** to filter to the default **70%**
+qualification target. Details show matched keywords, gaps, and the reasons for the score;
+this is a profile-match estimate, not confirmation of an employer's eligibility rules.
+Your latest results are saved even with automatic queuing disabled, and are rescored when
+you return after editing your profile. Imported URLs also appear directly in Job Search.
+
+The default appearance is **Black & Green**: near-black surfaces, emerald accents,
+roomier navigation, collapsible search options, and a responsive results/detail layout.
+Existing saved theme preferences are preserved; change them in **Settings → Appearance**.
+
 ## Job sources
 
 | Source | Key needed | Notes |
@@ -172,12 +203,26 @@ edit pushes them over the bar).
 | [Himalayas](https://himalayas.app) | no | remote roles worldwide incl. Kenya/Africa/UAE, JSON API |
 | [UAE AI jobs](https://artificial.ae) | no | UAE AI & tech roles (Dubai, Abu Dhabi), JSON API |
 | [Adzuna](https://developer.adzuna.com) | free app id + key | aggregated listings, 21 countries incl. South Africa |
-| [LinkedIn](https://www.linkedin.com/jobs/search) | no (browser hand-off) | no public API — opens your search in the browser, Easy Apply applied as a filter, then track each job by pasting its URL |
+| MyJobMag | no | publisher feeds for Kenya, Nigeria and South Africa |
+| JobWeb | no | publisher feeds for Kenya, Uganda and Tanzania |
+| [Jooble UAE](https://ae.jooble.org/api/about) | UAE-specific API key | UAE vacancies across industries; enter the key in Settings |
+| [LinkedIn](https://www.linkedin.com/jobs/search) | browser session | open a search, then import the URL or use **Paste job details** |
+| Bayt, GulfTalent, BrighterMonday, Jobberman | browser access | open from **More websites**, then paste the job details to track it |
 | Demo data | no | offline sample postings so the app is always usable |
 
 Sources are queried in parallel; a failing board is reported in the results line ("issues:
 Remotive: timed out") and never blocks the others. If *no* board can be reached, the app
 offers clearly-labelled demo postings so the workflow can still be explored.
+
+For regional logistics vacancies, click **Africa + UAE logistics**, then **Search jobs**.
+The preset includes on-site jobs and searches related procurement, warehouse, freight
+and supply-chain titles. Africa matches individual African countries; UAE matches
+Dubai, Abu Dhabi and other supported emirate names. Feed coverage varies by publisher.
+The old three-source default is expanded automatically; custom source selections remain intact.
+Jooble requires a UAE-specific key for automatic UAE aggregation. The **More websites**
+menu provides LinkedIn Africa/UAE and other regional searches in your browser.
+**Paste job details** saves a copied posting for matching and application preparation;
+it does not connect a LinkedIn account or submit applications.
 
 Adding a board = subclass `JobSource` in `jautomatic/services/job_scraper.py` (set `name`,
 `label`, implement `fetch()`), then register it in `default_sources()`.
@@ -226,7 +271,7 @@ jautomatic/
     email_drafter.py                 application + follow-up e-mails
   ui/
     main_window.py                   window shell, background workers, app state
-    interview_prep_dialog.py         notes + question bank window (from the Applications tab)
+    interview_prep_dialog.py         notes + question bank window (from the Sent tab)
     theme.py                         dark/light palettes, shared widgets
     dashboard_tab.py  profile_tab.py  job_search_tab.py  applications_tab.py  settings_tab.py
 tests/                               stdlib unittest suite (262 tests, no network)

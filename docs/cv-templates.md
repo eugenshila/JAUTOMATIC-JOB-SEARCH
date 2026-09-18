@@ -6,6 +6,17 @@ your own.
 
 ## Built-in templates
 
+Word and PDF exports use Segoe UI, a clean Windows sans-serif font, with A4
+pages, readable section headings, and consistent spacing. Cover letters use
+a matching personal letterhead. Other platforms may substitute a local font.
+
+Choose **Settings → Documents → Export format → PDF + editable Word** to save
+both versions in the documents folder. The application tracker opens the PDF
+and email drafts name the PDF attachment; the adjacent Word file remains editable.
+Choose **PDF (.pdf)** to generate only the PDF. Save settings, then prepare or
+regenerate the application's materials to apply the new format. Existing files
+are not converted merely by changing the setting.
+
 | Name | Best for | What is different |
 |------|----------|-------------------|
 | `modern` | most applications (default) | Profile → tailored skills line → experience with impact bullets |

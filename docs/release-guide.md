@@ -76,7 +76,7 @@ To build and verify the MSI locally on a Windows machine:
 packaging\build.ps1
 
 # 2. Acceptance verification (elevated PowerShell prompt):
-packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.4.0-x64.msi
+packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.9.1-x64.msi
 ```
 
 ### Useful Switches
@@ -84,6 +84,19 @@ packaging\verify-install.ps1 -MsiPath dist\JAUTOMATIC-Setup-1.4.0-x64.msi
 - `packaging\build.ps1 -SkipPackage` — Run freeze only (`dist\jautomatic`).
 - `packaging\build.ps1 -SkipFreeze -SkipTests` — Package existing frozen directory.
 - `packaging\build.ps1 -Sign` — Sign locally with Azure Artifact Signing.
+- `packaging\build.ps1 -UseExistingEnvironment` — Reuse the installed packaging
+  environment and pinned WiX tool without upgrading dependencies or restoring tools.
+
+Run install/uninstall verification on a clean test machine. The script refuses
+to run when JAUTOMATIC is already installed, so it cannot remove a working installation.
+For upgrade acceptance, install the previous MSI in a disposable Windows VM, create
+a profile/application/document, install the new MSI, confirm all data and document
+links survive, and finally uninstall and verify that the data directory remains.
+
+ProductCode is deterministic per release version (see `build_info.product_code`),
+while UpgradeCode remains permanent. WiX 6 `Package/@Id` is a package identity,
+not ProductCode. See the [WiX Package schema](https://docs.firegiant.com/wix/schema/wxs/package/)
+and [Microsoft major-upgrade requirements](https://learn.microsoft.com/en-us/windows/win32/msi/major-upgrades).
 
 ---
 

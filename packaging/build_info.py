@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -154,6 +155,12 @@ def write_version_info(path: str | Path, version: str = APP_VERSION) -> Path:
     return target
 
 
+def product_code(version: str = APP_VERSION) -> str:
+    """Stable within a release; distinct across versions for major upgrades."""
+    namespace = uuid.UUID("6723609b-1b49-46f6-ad03-7554cbade5de")
+    return str(uuid.uuid5(namespace, f"jautomatic-x64-{msi_version(version)}")).upper()
+
+
 def as_dict() -> dict[str, str]:
     return {
         "APP_NAME": APP_NAME,
@@ -161,6 +168,7 @@ def as_dict() -> dict[str, str]:
         "MANUFACTURER": MANUFACTURER,
         "APP_VERSION": APP_VERSION,
         "MSI_VERSION": msi_version(),
+        "PRODUCT_CODE": product_code(),
         "MSI_FILENAME": msi_filename(),
         "WIX_VERSION": WIX_VERSION,
         "WIX_NAMESPACE": WIX_NAMESPACE,

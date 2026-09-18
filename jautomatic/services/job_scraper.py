@@ -1,8 +1,8 @@
 """Job-board scraping.
 
-Sources are pluggable.  The three keyless, public JSON endpoints (Remotive,
-Arbeitnow, RemoteOK) are enabled by default, Adzuna is available when the user
-pastes their free API credentials in Settings, and ``SampleSource`` fabricates
+Sources are pluggable. Public JSON endpoints and regional publisher feeds
+are enabled by default; Adzuna and Jooble UAE require credentials in Settings.
+``SampleSource`` fabricates
 a handful of realistic postings so the app is fully usable offline (or when a
 board rate-limits us).
 
@@ -26,6 +26,7 @@ from urllib.parse import urlencode, urlparse
 import requests
 
 from ..models import JobPosting, keywords, strip_html
+from .job_regions import location_matches
 
 USER_AGENT = (
     "JAUTOMATIC-JOB-SEARCH/1.4 (+https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH) "
@@ -107,6 +108,12 @@ def parse_salary(text: str) -> tuple[int, int, str]:
             continue
         if low > high:
             low, high = high, low
+        period = plain[match.end():match.end() + 35].lower()
+        if re.search(r"(?:per\s+|/\s*|\b)(?:month|monthly|mo\b)", period):
+            low, high = low * 12, high * 12
+        elif re.search(r"(?:per\s+|/\s*|\b)(?:hour|hourly|hr\b|week|weekly|day|daily)", period):
+            # Do not invent working hours/days for an annual salary comparison.
+            return 0, 0, _currency_in(plain)
         return low, high, _currency_in(plain)
     return 0, 0, ""
 
@@ -181,6 +188,46 @@ def _ld_description(html: str) -> str:
     return ""
 
 
+def _job_schema(html: str) -> dict:
+    def walk(value):
+        if isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+        elif isinstance(value, dict):
+            if "JobPosting" in ([value.get("@type")] if isinstance(value.get("@type"), str)
+                                else (value.get("@type") or [])):
+                yield value
+            yield from walk(value.get("@graph", []))
+    for block in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)'
+                            r'</script>', html, re.I | re.S):
+        try:
+            for job in walk(json.loads(block)):
+                return job
+        except (ValueError, TypeError):
+            continue
+    return {}
+
+
+def posting_from_details(url: str, title: str, company: str, location: str,
+                         description: str, remote: bool = False) -> JobPosting:
+    """Import the user's copied job text without fetching or logging into a website."""
+    url = url.strip()
+    if "://" not in url:
+        url = "https://" + url
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Enter the job's http(s) URL.")
+    if not all(value.strip() for value in (title, company, description)):
+        raise ValueError("Enter the job title, employer and copied job description.")
+    host = parsed.hostname.lower()
+    source = "linkedin" if host == "linkedin.com" or host.endswith(".linkedin.com") else "manual"
+    low, high, currency = parse_salary(description)
+    return JobPosting(source=source, title=title.strip(), company=company.strip(),
+                      location=location.strip(), description=description.strip(), url=url,
+                      remote=remote, salary_min=low, salary_max=high, currency=currency,
+                      tags=_tagify(title, description), posted_at="")
+
+
 def posting_from_url(url: str, timeout: int = 15) -> JobPosting:
     """Best-effort single-post import from any public job-posting URL.
 
@@ -204,23 +251,42 @@ def posting_from_url(url: str, timeout: int = 15) -> JobPosting:
     html = response.text or ""
 
     meta = _extract_meta(html)
-    title = (meta.get("og:title") or _first_title(html) or "").strip()
-    description = (meta.get("og:description") or meta.get("description")
+    schema = _job_schema(html)
+    title = _clean(schema.get("title") or meta.get("og:title") or _first_title(html))
+    description = (schema.get("description") or meta.get("og:description") or meta.get("description")
                    or _ld_description(html) or "").strip()
     company = (meta.get("og:site_name") or _domain_label(parsed.netloc)).strip()
     location = (meta.get("og:location") or meta.get("location") or "").strip()
+    hiring = schema.get("hiringOrganization") or {}
+    if isinstance(hiring, dict) and hiring.get("name"):
+        company = _clean(hiring["name"])
+    locations = schema.get("jobLocation") or []
+    if isinstance(locations, dict):
+        locations = [locations]
+    labels = []
+    for place in locations if isinstance(locations, list) else []:
+        address = place.get("address", {}) if isinstance(place, dict) else {}
+        if isinstance(address, dict):
+            country = address.get("addressCountry") or ""
+            if isinstance(country, dict):
+                country = country.get("name", "")
+            labels.append(", ".join(_clean(v) for v in
+                                   (address.get("addressLocality"), address.get("addressRegion"), country) if v))
+    location = "; ".join(filter(None, labels)) or location
     salary_min, salary_max, currency = parse_salary(description[:600])
     remote = looks_remote(location, description)
-    literal = _domain_label(parsed.netloc).lower()
-    source = "linkedin" if "linkedin" in literal else "manual"
+    host = (parsed.hostname or "").lower()
+    source = "linkedin" if host == "linkedin.com" or host.endswith(".linkedin.com") else "manual"
     if source == "linkedin":
+        if not description or title.lower() in ("linkedin", "linkedin login, sign in") or "sign in" in title.lower():
+            raise ValueError("LinkedIn did not provide the posting. Use Paste job details with text from your browser.")
         # LinkedIn posts "Title - Company | LinkedIn" into og:title; strip that.
         title = re.sub(r"\s*-\s*[^|]*\|\s*LinkedIn\s*$", "", title).strip()
     return JobPosting(
         source=source, title=title or "Job posting", company=company or parsed.netloc,
         location=location, remote=remote, salary_min=salary_min, salary_max=salary_max,
         currency=currency, url=url, description=description,
-        tags=_tagify(title, description, limit=8), posted_at=date.today().isoformat())
+        tags=_tagify(title, description, limit=8), posted_at=str(schema.get("datePosted") or ""))
 
 
 def linkedin_search_url(query_text: str, location: str = "",
@@ -254,9 +320,13 @@ def query_matches(text: str, terms: list[str], require_all: bool = True) -> bool
     if not terms:
         return True
     haystack = (text or "").lower()
-    if require_all:
-        return all(term in haystack for term in terms)
-    return any(term in haystack for term in terms)
+    def matches(term):
+        if term in ("logistics", "logistic"):
+            return any(re.search(r"\b" + word + r"\b", haystack) for word in
+                       ("logistics?", "supply chain", "procurement", "warehous(?:e|ing)",
+                        "freight", "shipping", "transport(?:ation)?", "inventory", "distribution"))
+        return term in haystack
+    return all(matches(term) for term in terms) if require_all else any(matches(term) for term in terms)
 
 
 @dataclass
@@ -265,6 +335,7 @@ class SearchQuery:
     location: str = ""
     remote_only: bool = False
     min_salary: int = 0
+    salary_currency: str = "USD"
     limit_per_source: int = 25
     sources: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
@@ -321,12 +392,23 @@ class SearchOutcome:
             parts = [f"No job board could be reached — showing {len(self.jobs)} demo posting(s) "
                      f"instead so you can still try the workflow."]
         else:
-            parts = [f"{len(self.jobs)} matches from {self.results_ok_count} source(s)"]
+            contributing = len({job.source for job in self.jobs})
+            parts = [f"{len(self.jobs)} matches from {contributing} source(s); "
+                     f"{self.results_ok_count} board(s) responded"]
         if self.filtered_out:
             parts.append(f"{self.filtered_out} filtered out")
         if self.errors:
             parts.append("issues: " + "; ".join(self.errors))
         return " · ".join(parts)
+
+    def source_summary(self) -> str:
+        counts = {}
+        for job in self.jobs:
+            counts[job.source] = counts.get(job.source, 0) + 1
+        return " | ".join(
+            f"{result.label}: {result.error}" if result.error else
+            f"{result.label}: {counts.get(result.source, 0)} shown / {len(result.jobs)} fetched"
+            for result in self.results)
 
     @property
     def results_ok_count(self) -> int:
@@ -487,7 +569,8 @@ class AdzunaSource(JobSource):
         }
         if query.location.strip():
             params["where"] = query.location.strip()
-        if query.min_salary:
+        from .eligibility import ADZUNA_CURRENCIES, currencies_match
+        if query.min_salary and currencies_match(query.salary_currency, ADZUNA_CURRENCIES.get(country, "")):
             params["salary_min"] = query.min_salary
         payload = _request_json(
             f"https://api.adzuna.com/v1/api/jobs/{country}/search/1", timeout, params)
@@ -502,7 +585,7 @@ class AdzunaSource(JobSource):
                 source=self.name, title=_clean(item.get("title")),
                 company=_clean((item.get("company") or {}).get("display_name")),
                 location=location, remote=remote, salary_min=salary_min, salary_max=salary_max,
-                currency="GBP" if country == "gb" else "",
+                currency=ADZUNA_CURRENCIES.get(country, ""),
                 url=item.get("redirect_url") or "", description=description,
                 tags=_tagify(description, limit=6), posted_at=str(item.get("created") or "")))
         return jobs
@@ -554,11 +637,11 @@ class HimalayasSource(JobSource):
             salary_min = int(item.get("minSalary") or 0)
             salary_max = int(item.get("maxSalary") or 0)
             period = (item.get("salaryPeriod") or "annual").lower()
-            if period in ("hourly", "weekly", "fortnightly", "monthly"):
-                multiplier = {"hourly": 2080, "weekly": 52, "fortnightly": 26,
-                              "monthly": 12}[period]
-                salary_min *= multiplier
-                salary_max *= multiplier
+            if period == "monthly":
+                salary_min *= 12
+                salary_max *= 12
+            elif period not in ("annual", "annually", "yearly", "year"):
+                salary_min = salary_max = 0  # hours and working weeks are unknown
             currency = item.get("currency") or ""
             description = _clean(item.get("description") or item.get("excerpt") or "")
             jobs.append(JobPosting(
@@ -896,8 +979,9 @@ def default_task_sources() -> list[JobSource]:
 
 
 def default_sources() -> list[JobSource]:
+    from .regional_job_sources import regional_sources, JoobleUaeSource
     return [RemotiveSource(), ArbeitnowSource(), RemoteOkSource(), HimalayasSource(),
-            ArtificialAeSource(), AdzunaSource(), SampleSource()]
+            ArtificialAeSource(), *regional_sources(), JoobleUaeSource(), AdzunaSource(), SampleSource()]
 
 
 # --------------------------------------------------------------------------- #
@@ -986,7 +1070,7 @@ class JobScraper:
         return chosen
 
     def _fetch_source(self, source: JobSource, query: SearchQuery) -> list[JobPosting]:
-        if isinstance(source, AdzunaSource) and self.settings is not None:
+        if source.needs_credentials and self.settings is not None:
             return source.fetch_with(query, self.settings, self._timeout())
         return source.fetch(query, timeout=self._timeout())
 
@@ -1044,14 +1128,14 @@ class JobScraper:
             if query.remote_only and not job.remote:
                 dropped += 1
                 continue
-            if query.location and not job.remote:
-                wanted = query.location.lower()
-                if wanted not in (job.location or "").lower():
-                    dropped += 1
-                    continue
+            if not location_matches(query.location, job.location, job.remote):
+                dropped += 1
+                continue
             if query.min_salary:
+                from .eligibility import currencies_match
                 ceiling = job.salary_max or job.salary_min
-                if ceiling and ceiling < query.min_salary:
+                if (ceiling and currencies_match(job.currency, query.salary_currency)
+                        and ceiling < query.min_salary):
                     dropped += 1
                     continue
             kept.append(job)

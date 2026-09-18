@@ -24,6 +24,17 @@ SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 REPO_ROOT = os.path.dirname(SPEC_DIR)
 VERSION_FILE = os.path.join(SPEC_DIR, "version_info.txt")
 
+# Match Windows' system-DLL precedence when PyInstaller searches PATH.
+# Tools such as Poppler can ship an incompatible icuuc.dll with versioned
+# exports; Qt expects the unsuffixed Windows ICU API. Collecting that DLL
+# breaks QtCore on launch even though source-mode exports work correctly.
+if os.name == "nt":
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    os.environ["PATH"] = os.pathsep.join([
+        os.path.join(system_root, "System32"), system_root,
+        os.environ.get("PATH", ""),
+    ])
+
 block_cipher = None
 
 a = Analysis(

@@ -54,7 +54,7 @@ function Add-Check($Name, $Ok, $Detail) {
 
 function Invoke-Msiexec($Arguments, $LogPath) {
     $allArgs = "$Arguments /l*v `"$LogPath`""
-    $proc = Start-Process msiexec.exe -ArgumentList $allArgs -Wait -PassThru
+    $proc = Start-Process msiexec.exe -ArgumentList $allArgs -Wait -PassThru -WindowStyle Hidden
     return $proc.ExitCode
 }
 
@@ -99,6 +99,9 @@ Write-Host "Verifying $Msi"
 Write-Host ""
 
 # -- 1. install -------------------------------------------------------------- #
+if ($null -ne (Get-ArpEntry)) {
+    throw "JAUTOMATIC is already installed. Run this install/uninstall rehearsal on a clean test machine to avoid removing an existing installation."
+}
 $exitCode = Invoke-Msiexec "/i `"$Msi`" /qn /norestart" $InstallLog
 Add-Check "msiexec install exits 0" ($exitCode -eq 0) "exit=$exitCode log=$InstallLog"
 
