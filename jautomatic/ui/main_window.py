@@ -49,6 +49,7 @@ from . import theme as th
 from .analytics_tab import AnalyticsTab
 from .applications_tab import ApplicationsTab
 from .dashboard_tab import DashboardTab
+from .education_tab import EducationTab
 from .interview_prep_dialog import InterviewPrepDialog
 from .job_search_tab import JobSearchTab
 from .profile_tab import ProfileTab
@@ -60,6 +61,7 @@ NAV_ITEMS = [
     ("profile", "Profile", "Who you are, what you want"),
     ("search", "Job search", "Find and score openings"),
     ("tasks", "Tasks", "Microtasks & gigs with a minimum-pay filter"),
+    ("education", "Education", "Skills development, courses and certificates"),
     ("applications", "Applications", "Prepare applications before sending"),
     ("sent", "Sent", "Sent applications, follow-ups and interview preparation"),
     ("archive", "Archive", "Regrets, archived applications and permanent deletion"),
@@ -175,6 +177,7 @@ class MainWindow(QMainWindow):
             "profile": ProfileTab(self),
             "search": JobSearchTab(self),
             "tasks": TasksTab(self),
+            "education": EducationTab(self),
             "applications": ApplicationsTab(self),
             "sent": ApplicationsTab(self, "sent"),
             "archive": ApplicationsTab(self, "archive"),
