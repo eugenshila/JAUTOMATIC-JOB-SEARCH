@@ -110,7 +110,9 @@ class EducationTab(QWidget):
     def __init__(self, ctx) -> None:
         super().__init__()
         self.ctx = ctx
-        self._ranked: list[tuple[dict, int, list[str]]] = []
+        self.development_threshold = max(80, int(getattr(ctx.settings, "min_match_score", 0) or 0))
+        self._ranked: list[tuple[dict, int, list[str], list[str]]] = []
+        self._under_threshold_count = 0
         self._build_ui()
         self.refresh()
 
@@ -121,18 +123,19 @@ class EducationTab(QWidget):
 
         stats = QHBoxLayout()
         stats.setSpacing(10)
-        self.recommended_stat = th.StatCard("Recommended", "0", "Courses tied to current job gaps", "accent")
+        self.gap_jobs_stat = th.StatCard("Below 80%", "0", "Active tracked jobs needing development", "warning")
+        self.recommended_stat = th.StatCard("Recommended", "0", "Courses tied to those job gaps", "accent")
         self.progress_stat = th.StatCard("In progress", "0", "Courses currently underway", "info")
         self.completed_stat = th.StatCard("Completed", "0", "Finished learning records", "success")
-        self.cert_stat = th.StatCard("Certificates", "0", "Certificates stored in JAUTOMATIC", "warning")
-        for card in (self.recommended_stat, self.progress_stat, self.completed_stat, self.cert_stat):
+        for card in (self.gap_jobs_stat, self.recommended_stat, self.progress_stat, self.completed_stat):
             stats.addWidget(card)
         layout.addLayout(stats)
 
         filter_card = th.Card(
             "Skills development",
-            "Recommendations are ranked from missing keywords in your tracked applications. "
-            "Free-credential status is shown separately so paid exams are never presented as free."
+            f"Recommendations focus on active tracked jobs scoring below {self.development_threshold}% and rank learning "
+            "by the missing skills holding those matches back. Free-credential status is shown separately so paid exams "
+            "are never presented as free."
         )
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -151,9 +154,9 @@ class EducationTab(QWidget):
         layout.addLayout(body, 1)
 
         courses = th.Card("Recommended courses", "Highest relevance appears first")
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["Course", "Provider", "Skills", "Credential", "Priority", "Status"]
+            ["Course", "Provider", "Skills", "Jobs helped", "Credential", "Priority", "Status"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -164,7 +167,8 @@ class EducationTab(QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
-        for col in (1, 3, 4, 5):
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        for col in (1, 4, 5, 6):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         courses.add(self.table)
 
@@ -225,62 +229,112 @@ class EducationTab(QWidget):
     def _save(self) -> None:
         self.ctx.save_profile(self.ctx.profile)
 
-    def _gap_counts(self) -> Counter:
-        counts: Counter = Counter()
+    def _under_threshold_rows(self):
         try:
             rows = self.ctx.pipeline.tracker(self.ctx.profile)
         except Exception:
-            rows = []
+            return []
+        return [
+            row for row in rows
+            if row.application.status_enum.is_active
+            and row.match.score < self.development_threshold
+        ]
+
+    def _gap_counts(self, rows=None) -> Counter:
+        counts: Counter = Counter()
+        rows = self._under_threshold_rows() if rows is None else rows
         for row in rows:
-            if not row.application.status_enum.is_active:
-                continue
             for skill in row.match.missing_keywords:
                 key = str(skill).strip().lower()
                 if key:
                     counts[key] += 1
         return counts
 
+    @staticmethod
+    def _course_matches_gap(course_skill: str, gap: str) -> bool:
+        left = course_skill.strip().lower()
+        right = gap.strip().lower()
+        if not left or not right:
+            return False
+        if left == right or left in right or right in left:
+            return True
+        aliases = {
+            "power bi": {"powerbi", "dax", "visualization", "dashboard", "dashboards"},
+            "powerbi": {"power bi", "dax", "visualization", "dashboard", "dashboards"},
+            "data analysis": {"analytics", "analyst", "excel", "sql", "visualization"},
+            "artificial intelligence": {"ai", "generative ai", "llm", "prompting"},
+            "ai": {"artificial intelligence", "generative ai", "llm", "prompting"},
+            "customer service": {"customer", "support", "service", "crm"},
+            "project management": {"project", "agile", "scrum", "kanban", "coordination"},
+            "business communication": {"communication", "email", "writing"},
+        }
+        return right in aliases.get(left, set()) or left in aliases.get(right, set())
+
     def _rank_courses(self) -> None:
-        gaps = self._gap_counts()
+        target_rows = self._under_threshold_rows()
+        self._under_threshold_count = len(target_rows)
+        gaps = self._gap_counts(target_rows)
         profile_skills = self.ctx.profile.skill_set
-        ranked: list[tuple[dict, int, list[str]]] = []
+        ranked: list[tuple[dict, int, list[str], list[str]]] = []
 
         for course in COURSE_CATALOG:
             skills = [s.lower() for s in course["skills"]]
             hits: list[str] = []
+            jobs_helped: list[str] = []
             score = 0
-            for skill in skills:
-                exact = gaps.get(skill, 0)
-                fuzzy = sum(count for gap, count in gaps.items()
-                            if skill in gap or gap in skill)
-                weight = max(exact, fuzzy)
-                if weight:
-                    hits.append(skill)
-                    score += min(24, 8 * weight)
 
-            # Give useful baseline weight to courses that expand the user's
-            # current field even before enough applications have been tracked.
+            for skill in skills:
+                related = [(gap, count) for gap, count in gaps.items()
+                           if self._course_matches_gap(skill, gap)]
+                if related:
+                    hits.append(skill)
+                    score += min(28, 8 * sum(count for _, count in related))
+
+            for row in target_rows:
+                if any(self._course_matches_gap(skill, gap)
+                       for skill in skills for gap in row.match.missing_keywords):
+                    jobs_helped.append(f"{row.job.title} · {row.job.company}".strip(" ·"))
+                    # Near-threshold jobs get a little more priority because one
+                    # targeted skill can realistically move them above the bar.
+                    deficit = max(1, self.development_threshold - row.match.score)
+                    score += max(3, 14 - min(deficit, 11))
+
+            # Baseline relevance keeps the tab useful before enough jobs exist.
             if any(skill in {"power bi", "powerbi", "data analysis", "artificial intelligence",
                              "ai", "customer service", "project management", "agile"}
                    for skill in skills):
-                score += 12
+                score += 10
             if any(skill in profile_skills for skill in skills):
-                score += 5
+                score += 4
             if course.get("verified_free"):
                 score += 8
-            score = min(100, score)
-            ranked.append((course, score, hits))
 
-        ranked.sort(key=lambda item: (-item[1], item[0]["provider"], item[0]["title"]))
+            score = min(100, score)
+            ranked.append((course, score, hits, jobs_helped[:5]))
+
+        ranked.sort(key=lambda item: (-len(item[3]), -item[1],
+                                     item[0]["provider"], item[0]["title"]))
         self._ranked = ranked
 
-        if gaps:
+        if target_rows and gaps:
             top = [f"{pretty_term(k)} ({v})" for k, v in gaps.most_common(8)]
-            self.gap_line.setText("Most common missing job keywords: " + " · ".join(top))
+            nearest = sorted(target_rows, key=lambda row: -row.match.score)[:3]
+            job_text = " · ".join(
+                f"{row.job.title} {row.match.score}%" for row in nearest
+            )
+            self.gap_line.setText(
+                f"{len(target_rows)} active job(s) are below {self.development_threshold}%. "
+                f"Closest matches: {job_text}. Most common missing skills: " + " · ".join(top)
+            )
+        elif target_rows:
+            self.gap_line.setText(
+                f"{len(target_rows)} active job(s) are below {self.development_threshold}%, "
+                "but their postings do not expose enough skill keywords to map a course reliably."
+            )
         else:
             self.gap_line.setText(
-                "No tracked-job skill gaps yet. Recommendations use your existing profile focus "
-                "until you import or track more jobs."
+                f"No active tracked jobs are below {self.development_threshold}%. "
+                "Recommendations remain available for general skills development."
             )
 
     # --------------------------------------------------------------- view #
@@ -291,34 +345,36 @@ class EducationTab(QWidget):
         records = [r for r in store.values() if isinstance(r, dict)]
         in_progress = sum(1 for r in records if r.get("status") == "In progress")
         completed = sum(1 for r in records if r.get("status") == "Completed")
-        certificates = sum(1 for r in records if r.get("certificate_path"))
-        recommended = sum(1 for _, score, _ in self._ranked if score >= 20)
+        recommended = sum(1 for _, score, _, jobs in self._ranked if score >= 20 and jobs)
+        if not recommended:
+            recommended = sum(1 for _, score, _, _ in self._ranked if score >= 20)
+        self.gap_jobs_stat.set_value(str(self._under_threshold_count), f"Target: {self.development_threshold}%+")
         self.recommended_stat.set_value(str(recommended))
         self.progress_stat.set_value(str(in_progress))
         self.completed_stat.set_value(str(completed))
-        self.cert_stat.set_value(str(certificates))
 
     def _fill_table(self) -> None:
         if not hasattr(self, "table"):
             return
         query = self.search.text().strip().lower() if hasattr(self, "search") else ""
         rows = []
-        for course, score, hits in self._ranked:
+        for course, score, hits, jobs_helped in self._ranked:
             hay = " ".join([
                 course["title"], course["provider"], " ".join(course["skills"]),
                 course["credential"],
             ]).lower()
             if query and query not in hay:
                 continue
-            rows.append((course, score, hits))
+            rows.append((course, score, hits, jobs_helped))
 
         self.table.setRowCount(len(rows))
-        for row_index, (course, score, hits) in enumerate(rows):
+        for row_index, (course, score, hits, jobs_helped) in enumerate(rows):
             record = self._record(course["id"])
             values = [
                 course["title"],
                 course["provider"],
                 ", ".join(course["skills"][:4]),
+                "; ".join(jobs_helped[:2]) if jobs_helped else "General development",
                 course["credential"],
                 str(score),
                 record.get("status") or "Not started",
@@ -327,7 +383,7 @@ class EducationTab(QWidget):
                 item = QTableWidgetItem(value)
                 if col == 0:
                     item.setData(Qt.UserRole, course["id"])
-                if col == 4:
+                if col == 5:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(row_index, col, item)
         if rows:
@@ -342,16 +398,16 @@ class EducationTab(QWidget):
             return None
         item = self.table.item(row, 0)
         course_id = item.data(Qt.UserRole) if item else None
-        for course, score, hits in self._ranked:
+        for course, score, hits, jobs_helped in self._ranked:
             if course["id"] == course_id:
-                return course, score, hits
+                return course, score, hits, jobs_helped
         return None
 
     def _show_selected(self) -> None:
         selected = self._selected()
         if not selected:
             return
-        course, score, hits = selected
+        course, score, hits, jobs_helped = selected
         record = self._record(course["id"])
         self.detail_title.setText(course["title"])
         self.detail_meta.setText(
@@ -360,9 +416,12 @@ class EducationTab(QWidget):
         )
         self.priority_bar.setValue(score)
         gap_text = ", ".join(pretty_term(s) for s in hits) if hits else "No direct tracked-job gap yet"
+        jobs_text = "<br>".join(f"• {job}" for job in jobs_helped) if jobs_helped else "General development"
         self.detail.setHtml(
             f"<b>Skills:</b> {', '.join(course['skills'])}<br><br>"
             f"<b>Why it is recommended:</b> {gap_text}<br><br>"
+            f"<b>Jobs this may help:</b><br>{jobs_text}<br><br>"
+            f"<b>Target threshold:</b> {self.development_threshold}%<br><br>"
             f"<b>Notes:</b> {course['note']}"
         )
         path = record.get("certificate_path") or ""
