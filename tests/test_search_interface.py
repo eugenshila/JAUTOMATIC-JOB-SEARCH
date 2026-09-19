@@ -33,10 +33,10 @@ class SearchInterfaceTest(WorkspaceTestCase):
         self.tab = JobSearchTab(self.ctx)
         self.addCleanup(self.tab.close)
 
-    def test_all_results_visible_and_70_percent_is_inclusive(self):
+    def test_all_results_visible_and_80_percent_is_inclusive(self):
         self.tab.ranked = [
             (JobPosting(title=f"Role {score}", company="Example"), MatchResult(score=score))
-            for score in (69, 70, 85)
+            for score in (79, 80, 85)
         ]
         self.tab._fill_table()
         self.assertEqual(self.tab.table.rowCount(), 3)
