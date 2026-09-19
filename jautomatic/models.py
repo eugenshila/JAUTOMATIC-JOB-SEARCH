@@ -794,12 +794,13 @@ class AppSettings:
     data_dir: str = ""
     enabled_sources: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCE_NAMES))
     source_catalog_version: int = 2
+    qualification_policy_version: int = 2
     jooble_uae_key: str = ""
     last_search_location: str | None = None
     results_per_source: int = 25
     request_timeout: int = 15
     autopilot: bool = False               # auto-prepare materials for top matches
-    autopilot_min_score: int = 70
+    autopilot_min_score: int = 80
     autopilot_max_per_run: int = 5
     follow_up_days: int = DEFAULT_FOLLOW_UP_DAYS
     follow_up_repeat_days: int = 5       # interval between later nudges in the ladder
@@ -810,7 +811,7 @@ class AppSettings:
     cv_template: str = "modern"           # modern | classic | compact
     export_format: str = "docx"           # docx | pdf | docx_pdf | md | txt
     min_salary: int = 0
-    min_match_score: int = 70               # qualification bar; results stay visible for review
+    min_match_score: int = 80               # qualification bar; results stay visible for review
     auto_track_qualified: bool = True       # search results at/above min_match_score go to the queue
     min_pay_usd: int = 10                   # Tasks search: only gigs advertising >= this per task (0 = off)
     remote_only: bool = False
@@ -862,6 +863,14 @@ class AppSettings:
             if set(payload["enabled_sources"]) == {"remotive", "arbeitnow", "remoteok"}:
                 payload["enabled_sources"] = list(DEFAULT_SOURCE_NAMES)
         payload["source_catalog_version"] = 2
+        # v2 raises JAUTOMATIC's default qualification standard from 70% to 80%.
+        # Only migrate legacy default values; preserve deliberate custom thresholds.
+        if int(data.get("qualification_policy_version") or 0) < 2:
+            if int(payload.get("min_match_score") or 70) == 70:
+                payload["min_match_score"] = 80
+            if int(payload.get("autopilot_min_score") or 70) == 70:
+                payload["autopilot_min_score"] = 80
+        payload["qualification_policy_version"] = 2
         for key in ("results_per_source", "request_timeout", "autopilot_min_score",
                     "autopilot_max_per_run", "follow_up_days", "follow_up_repeat_days",
                     "follow_up_max_nudges", "auto_clear_days",
