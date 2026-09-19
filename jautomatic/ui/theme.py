@@ -185,7 +185,7 @@ QListWidget::item:selected { background: %(surface_hi)s; }
 
 GLYPHS = {
     "sent": "✓", "archive": "▣",
-    "dashboard": "▤", "profile": "☰", "search": "⌕", "tasks": "◈", "applications": "✉",
+    "dashboard": "▤", "profile": "☰", "search": "⌕", "tasks": "◈", "education": "◇", "applications": "✉",
     "insights": "∑", "settings": "⚙", "check": "✔", "cross": "✖", "info": "ℹ", "warn": "⚠",
     "refresh": "↻", "add": "＋", "open": "↗", "save": "✔", "send": "➤",
     "doc": "▣", "spark": "✦", "clock": "◔", "star": "★", "trash": "🗑",
