@@ -92,7 +92,12 @@ def backup_workspace(workspace, parent: Path) -> Path:
     with closing(sqlite3.connect(staging / "jautomatic.sqlite3")) as destination:
         workspace._conn.backup(destination)
     manifest = {
-        "version": 1, "source": str(root),
+        "version": 1,
+        # Keep the lexical source path as well as the resolved form. On Windows,
+        # tempfile paths can mix 8.3 short names (RUNNER~1) and long names
+        # (runneradmin); document paths stored in SQLite must still be rebased.
+        "source": str(workspace.root.absolute()),
+        "source_resolved": str(root),
         "files": {str(p.relative_to(staging).as_posix()): _digest(p)
                   for p in staging.rglob("*") if p.is_file()},
     }
@@ -131,12 +136,25 @@ def restore_backup(folder: Path, target: Path) -> Path:
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(Path(folder) / relative, destination)
-    old_root = Path(manifest["source"])
+    source_roots = [Path(manifest["source"])]
+    resolved_source = manifest.get("source_resolved")
+    if resolved_source:
+        source_roots.append(Path(resolved_source))
     with closing(sqlite3.connect(target / "jautomatic.sqlite3")) as db:
         for column in ("cv_path", "cover_letter_path", "email_path", "prep_path"):
             for app_id, value in db.execute(f"SELECT application_id, {column} FROM applications"):
-                if value and Path(value).is_relative_to(old_root):
-                    new_value = str(target / Path(value).relative_to(old_root))
+                if not value:
+                    continue
+                value_path = Path(value)
+                relative = None
+                for old_root in source_roots:
+                    try:
+                        relative = value_path.relative_to(old_root)
+                        break
+                    except ValueError:
+                        continue
+                if relative is not None:
+                    new_value = str(target / relative)
                     db.execute(f"UPDATE applications SET {column}=? WHERE application_id=?",
                                (new_value, app_id))
         db.commit()
