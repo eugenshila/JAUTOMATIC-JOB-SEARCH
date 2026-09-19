@@ -48,7 +48,7 @@ class GuiBootTest(unittest.TestCase):
                 self.app.processEvents()
                 self.assertIn(APP_TITLE, window.windowTitle())
                 self.assertIn(__version__, window.windowTitle())
-                self.assertEqual(len(window.tabs), 9)
+                self.assertEqual(len(window.tabs), 10)
                 self.assertIn("sent", window.tabs)
                 self.assertIn("archive", window.tabs)
                 self.assertTrue(window.status_label.text())
