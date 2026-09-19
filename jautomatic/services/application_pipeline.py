@@ -93,10 +93,9 @@ def _profile_text(profile: Profile) -> str:
 def match_job(profile: Profile, job: JobPosting, settings=None) -> MatchResult:
     """Score how well ``job`` fits ``profile`` (0-100) and explain why.
 
-    A score of 70+ is deliberately a *qualification* bar, not a popularity
-    score: it requires your profile to cover the posting's own headline
-    requirements (tags), your pay floor and location to fit, and your target
-    title to align.  Postings that fail a hard requirement are capped below 70.
+    The score is a profile-match estimate, not a popularity score. The configurable
+    application threshold defaults to 80%. Hard requirement failures are capped
+    well below that threshold so they cannot auto-qualify.
     """
     result = MatchResult()
     profile_text = _profile_text(profile)

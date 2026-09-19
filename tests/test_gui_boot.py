@@ -57,6 +57,28 @@ class GuiBootTest(unittest.TestCase):
                 self.app.processEvents()
             self.assertTrue(window._closing)
 
+    def test_default_qualification_threshold_is_eighty(self):
+        from jautomatic.models import AppSettings
+
+        defaults = AppSettings()
+        self.assertEqual(defaults.min_match_score, 80)
+        self.assertEqual(defaults.autopilot_min_score, 80)
+
+        migrated = AppSettings.from_dict({
+            "min_match_score": 70,
+            "autopilot_min_score": 70,
+        })
+        self.assertEqual(migrated.min_match_score, 80)
+        self.assertEqual(migrated.autopilot_min_score, 80)
+
+        custom = AppSettings.from_dict({
+            "qualification_policy_version": 1,
+            "min_match_score": 75,
+            "autopilot_min_score": 85,
+        })
+        self.assertEqual(custom.min_match_score, 75)
+        self.assertEqual(custom.autopilot_min_score, 85)
+
     def test_boot_twice_restores_geometry(self):
         # Second boot in the same data dir must not crash (geometry restore
         # reads settings.json written by the first window's closeEvent).

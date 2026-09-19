@@ -138,7 +138,7 @@ class SettingsTab(QWidget):
         self.min_match_score.setRange(0, 100)
         self.min_match_score.setSuffix("%")
         self.min_match_score.setToolTip("Profile-match target for eligibility and automatic queuing. "
-                                        "Default: 70%. Lower matches remain available for review.")
+                                        "Default: 80%. Lower matches remain available for review.")
         self.remote_only = QCheckBox("Remote postings only")
         self.exclude_keywords = QLineEdit()
         self.exclude_keywords.setPlaceholderText("unpaid, commission only, crypto, doordash")
