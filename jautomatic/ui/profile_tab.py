@@ -290,6 +290,14 @@ class ProfileTab(QWidget):
         letter_form.addRow("Tone", self.tone)
         letter_form.addRow("Greeting", self.greeting)
         letter_form.addRow("Signature", self.signature)
+        self.letter_evidence = QPlainTextEdit()
+        self.letter_evidence.setMinimumHeight(180)
+        self.letter_evidence.setPlaceholderText(
+            "Optional cover-letter body: describe your experience, projects and education "
+            "in first person. Separate paragraphs with a blank line. The app adds the "
+            "role, employer, greeting and closing.")
+        self.letter_evidence.textChanged.connect(self._mark_dirty)
+        letter_form.addRow("Evidence paragraphs", self.letter_evidence)
         letters.add_layout(letter_form)
         right.addWidget(letters)
 
@@ -348,6 +356,8 @@ class ProfileTab(QWidget):
         self.tone.setCurrentIndex(max(index, 0))
         self.greeting.setText(profile.greeting)
         self.signature.setPlainText(profile.signature)
+        self.letter_evidence.setPlainText("\n\n".join(
+            (profile.extra or {}).get("cover_letter_paragraphs", [])))
         self._refresh_experience_list()
         self._refresh_education_list()
         self._update_skill_preview()
@@ -394,6 +404,10 @@ class ProfileTab(QWidget):
         profile.tone = self.tone.currentData() or "professional"
         profile.greeting = self.greeting.text().strip() or "Dear Hiring Team,"
         profile.signature = self.signature.toPlainText().strip()
+        profile.extra = dict(profile.extra or {})
+        profile.extra["cover_letter_paragraphs"] = [
+            text.strip() for text in self.letter_evidence.toPlainText().split("\n\n")
+            if text.strip()]
         return profile
 
     def _update_completeness(self) -> None:

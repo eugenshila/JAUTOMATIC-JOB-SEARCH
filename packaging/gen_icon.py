@@ -2,7 +2,8 @@
 
 The frozen exe, the Start Menu shortcut and the Add/Remove Programs entry all
 want an ``.ico``.  Rather than checking in an opaque binary nobody can
-rebuild, this module draws the mark (amber "J" on deep navy) and writes a
+rebuild, this module embeds the approved jautomatic-logo.png artwork (with a
+drawn green "J" on near black as fallback) and writes a
 Vista-style icon: a single 256×256 PNG-compressed entry, which every
 supported Windows reads.  Pillow-free on purpose — the icon must be
 regenerable on a bare build agent::
@@ -16,8 +17,8 @@ import zlib
 from pathlib import Path
 
 SIZE = 256
-NAVY = (26, 34, 51)
-AMBER = (245, 176, 65)
+BLACK = (8, 12, 11)
+GREEN = (82, 224, 148)
 
 
 def _png_chunk(tag: bytes, payload: bytes) -> bytes:
@@ -46,7 +47,7 @@ def _rounded_mask(x: int, y: int, radius: int) -> bool:
 
 
 def render_pixels() -> list[bytes]:
-    """Draw the mark: rounded navy tile, amber "J", amber underline bar."""
+    """Draw the mark: rounded black tile, green "J", green underline bar."""
     rows: list[bytes] = []
     bar_w, stem_x = 44, 140  # bold J stem, slightly right of centre
     top, hook_top = 40, 168
@@ -63,9 +64,9 @@ def render_pixels() -> list[bytes]:
             counter = hook_left <= x < stem_x - bar_w // 2 and hook_top <= y < hook_top + 22
             underline = 60 <= x < SIZE - 60 and 208 <= y < 222
             if (stem or hook or underline) and not counter:
-                row += bytes(AMBER) + b"\xff"
+                row += bytes(GREEN) + b"\xff"
             else:
-                row += bytes(NAVY) + b"\xff"
+                row += bytes(BLACK) + b"\xff"
         rows.append(bytes(row))
     return rows
 
@@ -77,11 +78,17 @@ def to_ico(png: bytes) -> bytes:
 
 
 def main() -> int:
-    ico = to_ico(_to_png(render_pixels()))
+    ico = to_ico(icon_png())
     out = Path(__file__).resolve().parent / "jautomatic.ico"
     out.write_bytes(ico)
     print(f"wrote {out} ({len(ico)} bytes)")
     return 0
+
+
+def icon_png() -> bytes:
+    """Use the approved 3D artwork, retaining the drawn mark as a fallback."""
+    artwork = Path(__file__).resolve().parent / "jautomatic-logo.png"
+    return artwork.read_bytes() if artwork.is_file() else _to_png(render_pixels())
 
 
 if __name__ == "__main__":

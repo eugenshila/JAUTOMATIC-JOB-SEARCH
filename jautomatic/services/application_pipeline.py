@@ -577,8 +577,9 @@ class ApplicationPipeline:
         return materials
 
     def prepare_outlook_draft(self, application: Application, profile: Profile | None = None):
-        """Reuse reviewed documents and generate only missing attachments."""
+        """Reuse the CV; refresh the letter when exact approved wording is set."""
         from .email_drafter import render_email
+        from .cover_letter import approved_cover_letter
         from .outlook_draft import write_message
 
         profile = profile or self.workspace.load_profile()
@@ -595,7 +596,8 @@ class ApplicationPipeline:
             if not document.path:
                 raise RuntimeError("Could not generate the CV attachment.")
             record.cv_path = str(document.path)
-        if not record.cover_letter_path or not Path(record.cover_letter_path).is_file():
+        if (approved_cover_letter(profile, job) or not record.cover_letter_path
+                or not Path(record.cover_letter_path).is_file()):
             document = self.cover_letters.generate(profile, job, match.as_context(), profile.tone,
                 self.workspace.documents_dir, self.settings.export_format)
             if not document.path:

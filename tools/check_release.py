@@ -102,7 +102,7 @@ def check_icon() -> list[str]:
         return ["packaging/jautomatic.ico is missing"]
 
     raw = ico_path.read_bytes()
-    expected = gen_icon.to_ico(gen_icon._to_png(gen_icon.render_pixels()))
+    expected = gen_icon.to_ico(gen_icon.icon_png())
     if raw != expected:
         issues.append("packaging/jautomatic.ico does not match reproducible gen_icon output")
 

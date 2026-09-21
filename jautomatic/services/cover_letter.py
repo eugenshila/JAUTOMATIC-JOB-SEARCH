@@ -175,8 +175,61 @@ def _closing(tone: str, profile: Profile, job: JobPosting) -> str:
             "Thank you for your time and consideration.")
 
 
+def select_cover_letter(profile: Profile, job: JobPosting) -> dict | None:
+    """Choose saved wording by role focus, without generating new claims."""
+    library = (profile.extra or {}).get("cover_letter_variants", [])
+    if not isinstance(library, list):
+        return None
+    variants = {v.get("id"): v for v in library if isinstance(v, dict)
+                and isinstance(v.get("body"), str) and v["body"].strip()}
+    signals = {
+        "corporate": ("logistics", "warehouse", "warehousing", "supply chain", "inventory",
+                      "distribution", "procurement", "transport", "stock control"),
+        "systems": ("super user", "superuser", "systems", "system support", "it support",
+                    "technical support", "wms", "erp", "user support", "data integrity",
+                    "user training", "system testing", "access control"),
+    }
+    def hits(text, terms):
+        return [term for term in terms if re.search(
+            r"(?<!\w)" + re.escape(term).replace(r"\ ", r"[\s-]+") + r"(?!\w)",
+            text, re.IGNORECASE)]
+    scores = {}
+    evidence = {}
+    for key, terms in signals.items():
+        title_hits = hits(job.title, terms)
+        description_hits = hits(job.description, terms)
+        scores[key] = 5 * len(title_hits) + min(4, len(description_hits))
+        evidence[key] = title_hits or description_hits
+    # Specific systems titles take priority over a general warehouse title.
+    if hits(job.title, signals["systems"]) and "systems" in variants:
+        chosen = "systems"
+    else:
+        available = [key for key in signals if key in variants and scores[key] >= 2]
+        chosen = max(available, key=lambda key: scores[key]) if available else "concise"
+    variant = variants.get(chosen)
+    if variant is None:
+        return None
+    return {**variant, "reason": ("Role focus: " + ", ".join(evidence[chosen][:3])
+                                  if chosen in evidence else "General application; no strong specialist focus")}
+
+
+def approved_cover_letter(profile: Profile, job: JobPosting) -> str:
+    """Preserve the applicant's approved wording; substitute only role/company."""
+    selected = select_cover_letter(profile, job)
+    template = (selected["body"] if selected else
+                (profile.extra or {}).get("approved_cover_letter_template", ""))
+    if not isinstance(template, str) or not template.strip():
+        return ""
+    return re.sub(r"\[Job Title\]|\[Company\]",
+                  lambda m: job.title if m.group() == "[Job Title]" else job.company,
+                  template.strip()) + "\n"
+
+
 def render_cover_letter(profile: Profile, job: JobPosting, match: MatchContext | None = None,
                         tone: str | None = None) -> str:
+    approved = approved_cover_letter(profile, job)
+    if approved:
+        return approved
     tone = (tone or profile.tone or "professional").lower()
     if tone not in TONES:
         tone = "professional"
@@ -186,13 +239,28 @@ def render_cover_letter(profile: Profile, job: JobPosting, match: MatchContext |
     if job.company and greeting.lower().startswith("dear hiring"):
         greeting = f"Dear {job.company} Hiring Team,"
 
+    evidence = (profile.extra or {}).get("cover_letter_paragraphs", [])
+    if evidence:
+        # Applicant-authored evidence is shared across roles; posting text is never
+        # promoted to a qualification. Projects retain their AI-assisted status.
+        opening = f"I am applying for the {job.title} position"
+        if job.company:
+            opening += f" at {job.company}"
+        if job.remote:
+            opening += " (remote)"
+        elif job.location:
+            opening += f" in {job.location}"
+        paragraphs = [opening + ".", *[x.strip() for x in evidence if x.strip()],
+                      _closing(tone, profile, job)]
+        return (greeting + "\n\n" + "\n\n".join(paragraphs)
+                + "\n\nBest regards,\n" + profile.signature_block().strip() + "\n")
+
     paragraphs = [
         f"I am applying for the {job.title} position at {job.company}"
         + (f" in {job.location}" if job.location and not job.remote else " (remote)")
         + (f", which I found via {source_label(job.source)}." if job.source
            else ", which I found on your careers page."),
         _strength_sentence(profile, match, job),
-        _company_hook(job),
     ]
 
     if profile.experience:
@@ -317,6 +385,10 @@ def ollama_cover_letter(profile: Profile, job: JobPosting, match: MatchContext |
         f"Advertised description: {job.description.strip() or '(none given)'}\n\n"
         f"Applicant full name: {profile.display_name}\n"
         f"Applicant headline: {profile.headline.strip() or '(none)'}\n"
+        f"Applicant summary: {profile.summary}\n"
+        f"Applicant-authored evidence: {(profile.extra or {}).get('cover_letter_paragraphs', [])}\n"
+        f"Projects: {(profile.extra or {}).get('projects', [])}\n"
+        f"Education including completion status: {[vars(e) for e in profile.education]}\n"
         f"Applicant skills: {', '.join(profile.skills) or 'none'}\n"
         f"Experience: {_experience_summary(profile)}\n"
         f"Keywords the applicant matches: {', '.join(match.matched_keywords) or 'none'}\n\n"
@@ -343,7 +415,10 @@ class CoverLetterService:
         and the returned document carries a ``warning`` explaining why.
         """
         warning = ""
-        if llm:
+        approved = approved_cover_letter(profile, job)
+        if approved:
+            markdown = approved
+        elif llm:
             try:
                 markdown = ollama_cover_letter(
                     profile, job, match, tone, llm.get("base_url")
@@ -367,7 +442,8 @@ class CoverLetterService:
             letterhead.append(contact)
         letterhead.extend([date.today().strftime("%d %B %Y"),
                            f"## Application for {job.title}", job.company])
-        markdown = "\n\n".join(letterhead) + "\n\n" + markdown
+        if not approved or select_cover_letter(profile, job):
+            markdown = "\n\n".join(letterhead) + "\n\n" + markdown
         document = GeneratedDocument(
             kind="cover_letter", text=markdown, template=(tone or profile.tone or "professional"),
             used_keywords=list((match.matched_keywords if match else []) or [])[:10],

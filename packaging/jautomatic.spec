@@ -41,7 +41,7 @@ a = Analysis(
     [os.path.join(REPO_ROOT, "main.py")],
     pathex=[REPO_ROOT],
     binaries=[],
-    datas=[],
+    datas=[(os.path.join(SPEC_DIR, "jautomatic.ico"), "packaging")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

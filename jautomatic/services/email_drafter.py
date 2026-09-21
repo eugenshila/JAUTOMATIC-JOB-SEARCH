@@ -20,7 +20,7 @@ from ..models import (
     slugify,
     unique_document_path,
 )
-from .cover_letter import MatchContext
+from .cover_letter import MatchContext, approved_cover_letter
 from .cv_generator import GeneratedDocument, document_suffix, export
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -129,6 +129,12 @@ def render_email(profile: Profile, job: JobPosting, match: MatchContext | None =
                  tone: str | None = None, attachments: list[str] | None = None) -> EmailDraft:
     tone = (tone or profile.tone or "professional").lower()
     recipient = guess_recipient(job)
+    approved = approved_cover_letter(profile, job)
+    if approved:
+        return EmailDraft(
+            subject=build_subject(profile, job), body=approved.rstrip("\n"),
+            recipient=recipient,
+            attachments=[Path(a).name for a in (attachments or []) if a], tone=tone)
     greeting_name = job.company.strip() or "Hiring Team"
 
     body_parts = [

@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
             th.apply_theme(app, self.settings.theme or th.DEFAULT_THEME)
 
         self.setWindowTitle(f"{APP_TITLE} {__version__}")
+        self.setWindowIcon(self._tray_icon())
         self.resize(1440, 900)
         self.setMinimumSize(1024, 680)
         self._build_ui()
@@ -447,6 +448,10 @@ class MainWindow(QMainWindow):
         self._tray = tray
 
     def _tray_icon(self) -> QIcon:
+        from ..runtime import base_dir
+        icon_path = base_dir() / "packaging" / "jautomatic.ico"
+        if icon_path.is_file():
+            return QIcon(str(icon_path))
         palette = th.current_theme()
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.transparent)

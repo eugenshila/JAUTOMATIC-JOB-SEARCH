@@ -16,9 +16,9 @@ from tests.test_documents import job, profile
 
 
 class NewBuiltinTemplateTests(unittest.TestCase):
-    def test_six_templates_are_registered_with_labels(self):
+    def test_templates_are_registered_with_labels(self):
         self.assertEqual(TEMPLATES, ("modern", "classic", "compact", "functional", "executive",
-                                     "technical"))
+                                     "technical", "portfolio"))
         for name in TEMPLATES:
             self.assertIn(name, TEMPLATE_LABELS)
             self.assertTrue(render_markdown(profile(), job(), name).strip(), name)

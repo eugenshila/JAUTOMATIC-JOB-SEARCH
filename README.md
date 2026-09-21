@@ -34,6 +34,16 @@ role", …). One click generates the whole application pack.
 **Applications** — prepare unsent jobs, review scores and documents, and keep notes.
 After applying, choose **Sent** and click **Apply** to move the record to **Sent**.
 
+Use **Select all** to select the rows currently shown, or Ctrl/Shift-click to
+select individual rows. **Archive selected** moves those rows to Archive;
+**Archive all shown** archives every row matching the current filters after
+confirming the count. Notes, history and documents are retained, and records
+can be restored from Archive. Hidden and Sent applications are not included.
+
+In Applications or Archive, use **Delete selected** to permanently remove the
+selected records, notes and history after confirming the count. Generated
+documents stay on disk. Use Ctrl/Shift-click or **Select all** to choose rows.
+
 **Open Outlook draft** — select an application and click this button to fill a
 tailored email subject and body and attach its CV and cover letter. Missing documents
 are generated automatically; existing files (including your edits) are reused.

@@ -38,8 +38,9 @@ from ..models import (
 )
 from . import template_engine
 
-TEMPLATES = ("modern", "classic", "compact", "functional", "executive", "technical")
+TEMPLATES = ("modern", "classic", "compact", "functional", "executive", "technical", "portfolio")
 TEMPLATE_LABELS = {
+    "portfolio": "Portfolio (experience and business projects)",
     "modern": "Modern (impact-focused)",
     "classic": "Classic (traditional ATS)",
     "compact": "Compact (one page)",
@@ -508,9 +509,40 @@ def render_technical(profile: Profile, job: JobPosting | None = None, match=None
     return "\n".join(lines).strip() + "\n"
 
 
+def render_portfolio(profile: Profile, job: JobPosting | None = None, match=None) -> str:
+    """Evidence-led CV: no inferred skills, keyword footer or invented credentials."""
+    lines = [f"# {profile.display_name}", profile.headline, _contact_line(profile)]
+    if profile.summary.strip():
+        lines.extend(["\n## Professional profile", profile.summary.strip()])
+    if profile.skills:
+        lines.extend(["\n## Core capabilities", " | ".join(profile.skills)])
+    projects = (profile.extra or {}).get("projects", [])
+    if projects:
+        lines.append("\n## Selected digital projects")
+        for project in projects:
+            lines.extend([f"\n### {project['name']}", project.get("period", "")])
+            lines.extend(f"- {bullet}" for bullet in project.get("highlights", []))
+            if project.get("url"):
+                lines.append(project["url"])
+    if profile.experience:
+        lines.append("\n## Professional experience")
+        for entry in profile.experience:
+            lines.extend([f"\n### {entry.title}" + (f" | {entry.company}" if entry.company else ""),
+                          " | ".join(x for x in (entry.period, entry.location) if x)])
+            lines.extend(f"- {bullet}" for bullet in _bullets(entry, job, 8))
+    if profile.education:
+        lines.append("\n## Education and professional training")
+        for entry in profile.education:
+            lines.append("- " + " | ".join(x for x in
+                         (entry.degree, entry.school, entry.period, entry.details) if x))
+    if profile.languages:
+        lines.extend(["\n## Languages", profile.languages])
+    return "\n".join(lines).strip() + "\n"
+
+
 RENDERERS = {"modern": render_modern, "classic": render_classic, "compact": render_compact,
              "functional": render_functional, "executive": render_executive,
-             "technical": render_technical}
+             "technical": render_technical, "portfolio": render_portfolio}
 
 
 # --------------------------------------------------------------------------- #
@@ -547,6 +579,7 @@ def template_context(profile: Profile, job: JobPosting | None = None, match=None
         "languages": profile.languages.strip(),
         "experience": experience,
         "education": education,
+        "projects": (profile.extra or {}).get("projects", []),
         "highlights": _impact_bullets(profile, job, 5),
         "desired_titles": list(profile.desired_titles),
         "seniority": profile.seniority,

@@ -1,10 +1,29 @@
 # CV templates
 
 JAUTOMATIC renders every CV from a template into Markdown, then exports that to
-`.docx` / `.pdf` / `.md` / `.txt`. You can pick one of the six built-in templates or write
+`.docx` / `.pdf` / `.md` / `.txt`. You can pick one of the seven built-in templates or write
 your own.
 
 ## Built-in templates
+
+The **Portfolio (experience and business projects)** template presents your
+profile, stated skills, selected projects, experience and education. It keeps
+education completion details and does not add posting keywords as qualifications.
+Select it in Settings → Documents. Project records live in `profile.json` under
+`extra.projects`, with `name`, `period`, `highlights` (a list) and `url` fields.
+Custom templates can also loop over `projects`.
+
+In Profile → Letter settings, **Evidence paragraphs** lets you write the body
+of your cover letter in first person. Separate paragraphs with blank lines.
+The app adds the job title, employer, greeting, closing and signature. Empty
+evidence uses the existing automatic drafting. These paragraphs are saved as
+`extra.cover_letter_paragraphs`; opt-in local AI receives this evidence and
+education status too. Review each letter for relevance before sending.
+
+After changing your profile or template, regenerate application materials to
+update existing documents. Previously generated files do not change on save.
+Use profile JSON import/export to preserve projects reliably; Word import is
+a best-effort extraction and should always be reviewed.
 
 Word and PDF exports use Segoe UI, a clean Windows sans-serif font, with A4
 pages, readable section headings, and consistent spacing. Cover letters use
@@ -25,8 +44,9 @@ are not converted merely by changing the setting.
 | `functional` | career changers, gaps, skills-heavy roles | Evidence grouped under the posting's own keywords ("Areas of expertise"), timeline reduced to one line per role |
 | `executive` | leadership roles | Quantified achievements first ("Selected achievements"), then roles with scope |
 | `technical` | engineering roles | Skills split into *relevant to this role* / *also*; a **Stack** line per role derived from your bullets; a footer stating which posting it was prepared for |
+| `portfolio` | operations and practical project experience | Stated skills and digital projects, then experience and education with completion details |
 
-All six read the same profile and tailor themselves to the posting the same way
+The original six read the same profile and tailor themselves to the posting the same way
 (the matched keywords of the job move to the front, bullets that evidence a
 posting tag sort first). Nothing is ever invented: a skill only appears if your
 profile contains it.

@@ -350,7 +350,7 @@ class IconTest(unittest.TestCase):
 
     def test_checked_in_icon_is_reproducible(self):
         gen_icon = _load_packaging_module("gen_icon")
-        expected = gen_icon.to_ico(gen_icon._to_png(gen_icon.render_pixels()))
+        expected = gen_icon.to_ico(gen_icon.icon_png())
         self.assertEqual((PACKAGING / "jautomatic.ico").read_bytes(), expected)
 
 

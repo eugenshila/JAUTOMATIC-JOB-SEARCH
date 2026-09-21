@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
 from jautomatic.models import AppSettings, ApplicationStatus, JobPosting, Profile
@@ -145,4 +145,112 @@ class ApplicationTabsTest(WorkspaceTestCase):
         self.ctx.refresh_all()
         self.ctx.tabs["sent"]._delete()
         self.assertIsNotNone(self.workspace.get_application(record.application_id))
+        self.ctx.confirm.assert_not_called()
+
+    def test_delete_selected_confirmation_scope_and_documents(self):
+        first = self._create()
+        other = self._create(ApplicationStatus.SHORTLISTED)
+        sent = self._create(ApplicationStatus.SENT)
+        document = self.workspace.documents_dir / "keep.txt"
+        document.write_text("Saved CV", encoding="utf-8")
+        first.cv_path = str(document)
+        self.workspace.save_application(first)
+        self.ctx.refresh_all()
+        queue = self.ctx.tabs["applications"]
+        queue.search_box.setText("discovered")
+        queue.select_all_button.click()
+        self.ctx.confirm.return_value = False
+        queue.delete_selected_button.click()
+        self.assertIsNotNone(self.workspace.get_application(first.application_id))
+        self.ctx.confirm.return_value = True
+        queue.delete_selected_button.click()
+        self.assertIsNone(self.workspace.get_application(first.application_id))
+        self.assertIsNotNone(self.workspace.get_application(other.application_id))
+        self.assertIsNotNone(self.workspace.get_application(sent.application_id))
+        self.assertTrue(document.exists())
+        self.assertTrue(self.ctx.confirm.call_args.kwargs["danger"])
+        self.ctx.confirm.reset_mock()
+        queue._delete_selected()
+        self.ctx.tabs["sent"]._delete_selected()
+        self.ctx.confirm.assert_not_called()
+
+    def test_delete_multiple_from_archive(self):
+        records = [self._create(status) for status in
+                   (ApplicationStatus.ARCHIVED, ApplicationStatus.REJECTED)]
+        self.ctx.refresh_all()
+        archive = self.ctx.tabs["archive"]
+        archive.select_all_button.click()
+        archive.delete_selected_button.click()
+        for record in records:
+            self.assertIsNone(self.workspace.get_application(record.application_id))
+        self.assertEqual(archive.table.rowCount(), 0)
+
+    def test_archive_all_respects_filters_and_preserves_records(self):
+        shown = self._create(ApplicationStatus.DISCOVERED)
+        hidden = self._create(ApplicationStatus.SHORTLISTED)
+        sent = self._create(ApplicationStatus.SENT)
+        shown.notes = "Keep this note"
+        self.workspace.save_application(shown)
+        self.ctx.refresh_all()
+        queue = self.ctx.tabs["applications"]
+        queue.search_box.setText("discovered")
+        queue._archive_queue(True)
+        saved = self.workspace.get_application(shown.application_id)
+        self.assertEqual(saved.status_enum, ApplicationStatus.ARCHIVED)
+        self.assertEqual(saved.notes, "Keep this note")
+        self.assertTrue(saved.history)
+        self.assertEqual(self.workspace.get_application(hidden.application_id).status_enum,
+                         ApplicationStatus.SHORTLISTED)
+        self.assertEqual(self.workspace.get_application(sent.application_id).status_enum,
+                         ApplicationStatus.SENT)
+
+    def test_ticks_take_precedence_over_highlighted_row(self):
+        self._create(ApplicationStatus.DISCOVERED)
+        self._create(ApplicationStatus.SHORTLISTED)
+        self.ctx.refresh_all()
+        queue = self.ctx.tabs["applications"]
+        ticked = queue.table.item(1, 0).data(Qt.UserRole)
+        queue.table.item(1, 0).setCheckState(Qt.Checked)
+        queue.table.selectRow(0)
+        other = queue._selected_application_id()
+        queue.refresh()
+        queue._archive_queue()
+        self.assertEqual(self.workspace.get_application(ticked).status_enum, ApplicationStatus.ARCHIVED)
+        self.assertNotEqual(self.workspace.get_application(other).status_enum, ApplicationStatus.ARCHIVED)
+
+    def test_add_matching_saved_jobs_preserves_archived_status(self):
+        archived = self._create(ApplicationStatus.ARCHIVED)
+        job = JobPosting(title="Warehouse coordinator", company="New employer")
+        self.workspace.save_jobs([job])
+        self.ctx.settings.min_match_score = 0
+        self.ctx.run_task = lambda title, work, done: done(work())
+        queue = self.ctx.tabs["applications"]
+        queue._add_matching_jobs()
+        self.assertIsNotNone(self.workspace.application_for_job(job.job_id))
+        self.assertEqual(self.workspace.get_application(archived.application_id).status_enum,
+                         ApplicationStatus.ARCHIVED)
+        queue._add_matching_jobs()
+        self.assertEqual(len(self.workspace.applications()), 2)
+
+    def test_archive_selection_cancel_and_select_all(self):
+        first = self._create(ApplicationStatus.DISCOVERED)
+        second = self._create(ApplicationStatus.SHORTLISTED)
+        self.ctx.refresh_all()
+        queue = self.ctx.tabs["applications"]
+        queue.table.selectRow(0)
+        chosen = queue._selected_application_id()
+        self.ctx.confirm.return_value = False
+        queue._archive_queue()
+        self.assertEqual(queue.table.rowCount(), 2)
+        self.ctx.confirm.return_value = True
+        queue._archive_queue()
+        self.assertEqual(self.workspace.get_application(chosen).status_enum, ApplicationStatus.ARCHIVED)
+        self.assertEqual(queue.table.rowCount(), 1)
+        queue.select_all_button.click()
+        queue.archive_selected_button.click()
+        self.assertEqual(queue.table.rowCount(), 0)
+        self.assertEqual(self.ctx.tabs['archive'].table.rowCount(), 2)
+        self.ctx.confirm.reset_mock()
+        queue._archive_queue(True)
+        self.ctx.tabs['sent']._archive_queue(True)
         self.ctx.confirm.assert_not_called()

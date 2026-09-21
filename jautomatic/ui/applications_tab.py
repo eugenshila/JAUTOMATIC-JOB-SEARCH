@@ -50,6 +50,7 @@ class ApplicationsTab(QWidget):
             "archive": ("Archive", "Regrets and archived applications — restore a status or delete permanently"),
         }[view]
         self.rows: list[TrackedApplication] = []
+        self._checked_ids: set[str] = set()
         self._build_ui()
 
     # ------------------------------------------------------------------ UI #
@@ -116,10 +117,12 @@ class ApplicationsTab(QWidget):
             self.table.setColumnHidden(column, self.view == "applications")
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(False)
         self.table.itemSelectionChanged.connect(self._show_selected)
+        self.table.itemChanged.connect(self._check_changed)
         header = self.table.horizontalHeader()
         header.setMinimumSectionSize(70)     # floor so columns never squash to illegibility
         header.setSectionResizeMode(2, QHeaderView.Stretch)          # role breathes
@@ -129,6 +132,29 @@ class ApplicationsTab(QWidget):
         self.table.setColumnWidth(4, 110)
         self.table.setColumnWidth(5, 110)
         self.table.setMinimumWidth(430)
+        bulk = QHBoxLayout()
+        self.select_all_button = th.button("Select all", "ghost",
+            "Select and tick every application currently shown", self._select_all)
+        self.archive_selected_button = th.button("Archive selected", "default",
+            "Move selected applications to Archive", lambda: self._archive_queue(False))
+        self.archive_all_button = th.button("Archive all shown", "default",
+            "Move every application matching the current filters to Archive",
+            lambda: self._archive_queue(True))
+        for button in (self.select_all_button, self.archive_selected_button, self.archive_all_button):
+            bulk.addWidget(button)
+            button.setVisible(self.view == "applications")
+        self.delete_selected_button = th.button("Delete selected", "danger",
+            "Permanently remove selected applications from the tracker", self._delete_selected)
+        bulk.addWidget(self.delete_selected_button)
+        self.delete_selected_button.setVisible(self.view in ("applications", "archive"))
+        self.select_all_button.setVisible(self.view in ("applications", "archive"))
+        bulk.addStretch(1)
+        self.add_matches_button = th.button("Add matching saved jobs", "default",
+            "Review saved postings against your current profile and queue those meeting your match target",
+            self._add_matching_jobs)
+        self.add_matches_button.setVisible(self.view == "applications")
+        bulk.addWidget(self.add_matches_button)
+        table_card.add_layout(bulk)
         table_card.add(self.table)
         splitter.addWidget(table_card)
 
@@ -291,6 +317,10 @@ class ApplicationsTab(QWidget):
             app = row.application
             status_item = QTableWidgetItem(row.status.label)
             status_item.setData(Qt.UserRole, app.application_id)
+            if self.view == "applications":
+                status_item.setFlags(status_item.flags() | Qt.ItemIsUserCheckable)
+                status_item.setCheckState(Qt.Checked if app.application_id in self._checked_ids
+                                          else Qt.Unchecked)
             status_item.setForeground(QColor(row.status.color))
             score_item = QTableWidgetItem(str(row.score))
             score_item.setTextAlignment(Qt.AlignCenter)
@@ -367,6 +397,11 @@ class ApplicationsTab(QWidget):
         if app.follow_up_due:
             bits.append("FOLLOW-UP DUE")
         self.detail_meta.setText(" · ".join(b for b in bits if b))
+        from ..services.cover_letter import select_cover_letter
+        letter = select_cover_letter(self.ctx.profile, row.job)
+        if letter:
+            self.detail_meta.setText(self.detail_meta.text() +
+                                     f"\nCover letter: {letter['name']} — {letter['reason']}")
         self.prep_label.setText(f"prep {app.prep_answered_count}/{app.prep_question_count}"
                                 if app.prep_question_count else "")
         self.status_chip.setVisible(True)
@@ -557,6 +592,32 @@ class ApplicationsTab(QWidget):
         self.ctx.notify("Application removed.", "info")
         self.ctx.refresh_all()
 
+    def _delete_selected(self) -> None:
+        if self.view not in ("applications", "archive"):
+            return
+        ids = [self.table.item(index.row(), 0).data(Qt.UserRole)
+               for index in self.table.selectionModel().selectedRows()]
+        if not ids:
+            self.ctx.notify("Select application rows to delete first.", "info")
+            return
+        if not self.ctx.confirm("Delete selected permanently",
+                f"Permanently delete {len(ids)} selected application(s), including their "
+                "notes and history? This cannot be undone. Generated documents stay on disk.",
+                danger=True):
+            return
+        removed = 0
+        for application_id in ids:
+            record = self.ctx.workspace.get_application(application_id)
+            if record is None or record.status_enum not in self.statuses:
+                continue
+            for dialog in list(getattr(self.ctx, "_previews", [])):
+                if getattr(dialog, "application_id", None) == application_id:
+                    dialog.close()
+            self.ctx.workspace.delete_application(application_id)
+            removed += 1
+        self.ctx.refresh_all()
+        self.ctx.notify(f"Deleted {removed} application(s).", "info")
+
     def _clear(self) -> None:
         row = self._current()
         if row is None:
@@ -567,6 +628,69 @@ class ApplicationsTab(QWidget):
         self.ctx.pipeline.clear_application(row.application)
         self.ctx.notify(f"{row.title} moved to Archive.", "success")
         self.ctx.refresh_all()
+
+    def _select_all(self) -> None:
+        self.table.selectAll()
+        if self.view == "applications":
+            for index in range(self.table.rowCount()):
+                self.table.item(index, 0).setCheckState(Qt.Checked)
+
+    def _check_changed(self, item) -> None:
+        if item.column() != 0 or self.view != "applications":
+            return
+        application_id = item.data(Qt.UserRole)
+        if item.checkState() == Qt.Checked:
+            self._checked_ids.add(application_id)
+        else:
+            self._checked_ids.discard(application_id)
+        count = sum(row.application.application_id in self._checked_ids for row in self.rows)
+        self.archive_selected_button.setText(f"Archive ticked ({count})" if count else "Archive selected")
+
+    def _add_matching_jobs(self) -> None:
+        def work():
+            _, added = self.ctx.pipeline.import_qualified(
+                self.ctx.workspace.jobs(), self.ctx.profile,
+                threshold=self.ctx.settings.min_match_score)
+            self.ctx.pipeline.refresh_scores(self.ctx.profile)
+            return len(added)
+
+        def done(count):
+            self.ctx.refresh_all()
+            self.ctx.notify(f"Added {count} matching saved job(s) to the queue. "
+                            "Archived and sent applications keep their status.", "success")
+
+        self.ctx.run_task("Reviewing saved jobs", work, done)
+
+    def _archive_queue(self, all_shown: bool = False) -> None:
+        """Archive a snapshot of visible queue IDs, never hidden or sent records."""
+        if self.view != "applications":
+            return
+        if all_shown:
+            ids = [row.application.application_id for row in self.rows]
+        else:
+            ids = [row.application.application_id for row in self.rows
+                   if row.application.application_id in self._checked_ids]
+            if not ids:
+                ids = [self.table.item(index.row(), 0).data(Qt.UserRole)
+                       for index in self.table.selectionModel().selectedRows()]
+        if not ids:
+            self.ctx.notify("No applications to archive. Select rows or adjust the filters.", "info")
+            return
+        scope = "shown" if all_shown else "selected"
+        if not self.ctx.confirm("Archive applications",
+                f"Move {len(ids)} {scope} application(s) to Archive? "
+                "Notes, history and documents are kept. You can restore them from Archive."):
+            return
+        moved = 0
+        for application_id in ids:
+            record = self.ctx.workspace.get_application(application_id)
+            if record is not None and record.status_enum in VIEW_STATUSES["applications"]:
+                self.ctx.pipeline.clear_application(record)
+                moved += 1
+        self._checked_ids.difference_update(ids)
+        self.archive_selected_button.setText("Archive selected")
+        self.ctx.refresh_all()
+        self.ctx.notify(f"Moved {moved} application(s) to Archive.", "success")
 
     def _preview_auto_clear(self) -> None:
         """Dry run: report (and optionally run) the auto-clear sweep."""
