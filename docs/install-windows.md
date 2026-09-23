@@ -56,8 +56,8 @@ behind**:
 For scripts and managed machines:
 
 ```bat
-msiexec /i JAUTOMATIC-Setup-1.9.1-x64.msi /qn /norestart
-msiexec /x JAUTOMATIC-Setup-1.9.1-x64.msi /qn /norestart   :: uninstall
+msiexec /i JAUTOMATIC-Setup-1.10.0-x64.msi /qn /norestart
+msiexec /x JAUTOMATIC-Setup-1.10.0-x64.msi /qn /norestart   :: uninstall
 ```
 
 ## FAQ

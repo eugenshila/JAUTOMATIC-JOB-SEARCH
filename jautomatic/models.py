@@ -176,9 +176,15 @@ WORDS = re.compile(r"[a-zA-Z][a-zA-Z0-9+#.\-]*")
 # Display names for job sources (the cover letter / e-mail mention where a role was found).
 SOURCE_LABELS = {
     "remotive": "Remotive", "arbeitnow": "Arbeitnow", "remoteok": "RemoteOK",
-    "himalayas": "Himalayas", "uae_ai": "UAE AI jobs",
+    "himalayas": "Himalayas", "uae_ai": "UAE AI jobs", "jobicy": "Jobicy",
+    "workingnomads": "Working Nomads", "company_boards": "the company's career page",
     "adzuna": "Adzuna", "sample": "the sample job feed", "manual": "manually pasted link",
     "linkedin": "LinkedIn (browser)",
+    "jooble_uae": "Jooble UAE", "jooble_sa": "Jooble Saudi Arabia",
+    "jooble_qa": "Jooble Qatar", "jooble_kw": "Jooble Kuwait", "jooble_bh": "Jooble Bahrain",
+    "myjobmag_ke": "MyJobMag Kenya", "myjobmag_ng": "MyJobMag Nigeria",
+    "myjobmag_za": "MyJobMag South Africa",
+    "jobweb_ke": "JobWeb Kenya", "jobweb_ug": "JobWeb Uganda", "jobweb_tz": "JobWeb Tanzania",
 }
 
 # Terms that look wrong when title-cased naively - used when skills appear in prose.
@@ -238,7 +244,8 @@ def prettify_terms(items: list[str]) -> list[str]:
 
 
 def source_label(value: str) -> str:
-    return SOURCE_LABELS.get((value or "").lower(), (value or "").title())
+    return SOURCE_LABELS.get((value or "").lower(),
+                             (value or "").replace("_", " ").title())
 
 
 def tokenize(text: str, min_length: int = 2) -> list[str]:
@@ -786,16 +793,35 @@ class Application:
 # --------------------------------------------------------------------------- #
 REGIONAL_SOURCE_NAMES = ["myjobmag_ke", "myjobmag_ng", "myjobmag_za",
                          "jobweb_ke", "jobweb_ug", "jobweb_tz", "jooble_uae"]
-DEFAULT_SOURCE_NAMES = ["remotive", "arbeitnow", "remoteok", "himalayas", *REGIONAL_SOURCE_NAMES]
+#: Gulf Jooble sites beyond the UAE. Each needs its own country key, so they are
+#: opt-in rather than part of the default selection (an unkeyed source is only a
+#: "Skipped:" line in the results summary).
+GULF_SOURCE_NAMES = ["jooble_sa", "jooble_qa", "jooble_kw", "jooble_bh"]
+DEFAULT_SOURCE_NAMES = ["remotive", "arbeitnow", "remoteok", "himalayas",
+                        "jobicy", "workingnomads", "company_boards", *REGIONAL_SOURCE_NAMES]
+#: Key-free sources that cover the Gulf, selected by the "Gulf logistics" preset.
+#: The Jooble Gulf sites are left out: without a country key they would only add
+#: "Skipped" lines to the results summary.
+GULF_PRESET_SOURCE_NAMES = ["himalayas", "jobicy", "workingnomads", "company_boards",
+                            "uae_ai", "remotive", "arbeitnow", "remoteok"]
+#: The default set before Jobicy / Working Nomads / company career boards existed.
+SOURCE_NAMES_V2 = ["remotive", "arbeitnow", "remoteok", "himalayas", *REGIONAL_SOURCE_NAMES]
+SOURCE_NAMES_V1 = ["remotive", "arbeitnow", "remoteok"]
+SOURCE_CATALOG_VERSION = 3
 
 
 @dataclass
 class AppSettings:
     data_dir: str = ""
     enabled_sources: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCE_NAMES))
-    source_catalog_version: int = 2
+    source_catalog_version: int = SOURCE_CATALOG_VERSION
     qualification_policy_version: int = 2
+    #: Company career boards to poll (Greenhouse / Lever / Ashby), as
+    #: ``provider:slug`` entries or careers-page URLs. Empty = the built-in list.
+    company_boards: list[str] = field(default_factory=list)
     jooble_uae_key: str = ""
+    #: Jooble keys per country code (``{"sa": "..."}``); each country site has its own.
+    jooble_keys: dict[str, str] = field(default_factory=dict)
     last_search_location: str | None = None
     results_per_source: int = 25
     request_timeout: int = 15
@@ -857,12 +883,36 @@ class AppSettings:
             payload["last_search_job_ids"] = ([str(job_id) for job_id in ids]
                                                if isinstance(ids, list) else None)
         selected = payload.get("enabled_sources", DEFAULT_SOURCE_NAMES)
-        payload["enabled_sources"] = [str(s) for s in selected] if isinstance(selected, list) else list(DEFAULT_SOURCE_NAMES)
-        if data.get("source_catalog_version") != 2:
-            # Expand the old three-board default once; preserve custom/offline selections.
-            if set(payload["enabled_sources"]) == {"remotive", "arbeitnow", "remoteok"}:
+        payload["enabled_sources"] = ([str(s) for s in selected] if isinstance(selected, list)
+                                      else list(DEFAULT_SOURCE_NAMES))
+        try:
+            stored_catalog = int(data.get("source_catalog_version") or 0)
+        except (TypeError, ValueError):
+            stored_catalog = 0
+        if stored_catalog < SOURCE_CATALOG_VERSION:
+            # Grow the built-in default when new boards arrive; a deliberate custom
+            # selection (or an offline-only one) is left exactly as it was.
+            if set(payload["enabled_sources"]) in (set(SOURCE_NAMES_V1), set(SOURCE_NAMES_V2)):
                 payload["enabled_sources"] = list(DEFAULT_SOURCE_NAMES)
-        payload["source_catalog_version"] = 2
+        payload["source_catalog_version"] = SOURCE_CATALOG_VERSION
+        boards = payload.get("company_boards")
+        cleaned_boards: list[str] = []
+        if isinstance(boards, list):
+            for value in boards:
+                text = str(value).strip()
+                if text and text not in cleaned_boards:
+                    cleaned_boards.append(text)
+        payload["company_boards"] = cleaned_boards
+        keys = payload.get("jooble_keys")
+        payload["jooble_keys"] = ({str(code).strip().lower(): str(value).strip()
+                                   for code, value in keys.items()
+                                   if str(code).strip() and str(value).strip()}
+                                  if isinstance(keys, dict) else {})
+        legacy_uae_key = str(payload.get("jooble_uae_key") or "").strip()
+        if legacy_uae_key:
+            # One place holds the secret: the UAE key moves into the country map.
+            payload["jooble_keys"].setdefault("ae", legacy_uae_key)
+            payload["jooble_uae_key"] = ""
         # v2 raises JAUTOMATIC's default qualification standard from 70% to 80%.
         # Only migrate legacy default values; preserve deliberate custom thresholds.
         if int(data.get("qualification_policy_version") or 0) < 2:

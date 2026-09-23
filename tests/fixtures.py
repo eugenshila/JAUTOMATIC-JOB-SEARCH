@@ -180,3 +180,156 @@ UAEAI = {
     ],
     "meta": {"count": 2, "total": 772, "limit": 50, "offset": 0, "has_more": True},
 }
+
+
+JOBICY = {
+    "apiVersion": "2.2.16",
+    "jobCount": 2,
+    "jobs": [
+        {
+            "id": 153918,
+            "url": "https://jobicy.com/jobs/153918-staff-product-manager",
+            "jobTitle": "Staff Product Manager",
+            "companyName": "Wheel",
+            "jobIndustry": ["Product & Operations"],
+            "jobType": ["Full-Time"],
+            "jobGeo": "United Arab Emirates",
+            "jobLevel": "Director",
+            "jobExcerpt": "Own the roadmap for patient experience.",
+            "jobDescription": "<p>Own the roadmap. Logistics for a virtual care platform.</p>",
+            "pubDate": "2026-09-20T12:00:00+00:00",
+            "salaryMin": 4000,
+            "salaryMax": 5000,
+            "salaryCurrency": "AED",
+            "salaryPeriod": "monthly",
+        },
+        {
+            "id": 153919,
+            "url": "https://jobicy.com/jobs/153919-frontend-engineer",
+            "jobTitle": "Frontend Engineer",
+            "companyName": "Bluebird",
+            "jobIndustry": ["Design"],
+            "jobType": ["Full-Time"],
+            "jobGeo": "Anywhere",
+            "jobLevel": "Senior",
+            "jobExcerpt": "React surfaces for a design system.",
+            "jobDescription": "<p>Build React interfaces.</p>",
+            "pubDate": "2026-09-18T09:00:00+00:00",
+            "salaryMin": 90000,
+            "salaryMax": 120000,
+            "salaryCurrency": "USD",
+            "salaryPeriod": "yearly",
+        },
+    ],
+}
+
+WORKINGNOMADS = [
+    {
+        "url": "https://www.workingnomads.com/job/go/1880339/",
+        "title": "Remote Logistics Coordinator",
+        "description": "Coordinate freight for a distributed team. Salary: $60,000 - $75,000.",
+        "company_name": "Kestrel Logistics",
+        "category_name": "Operations",
+        "tags": "logistics,freight,coordination",
+        "location": "Anywhere in the world",
+        "pub_date": "2026-09-21T02:36:00-04:00",
+    },
+    {
+        "url": "https://www.workingnomads.com/job/go/1879612/",
+        "title": "Content Reviewer",
+        "description": "Rate search results for relevance and quality.",
+        "company_name": "TELUS Digital",
+        "category_name": "Other",
+        "tags": "review,search",
+        "location": "United States",
+        "pub_date": "2026-09-20T10:00:00-04:00",
+    },
+]
+
+GREENHOUSE_CAREEM = {
+    "name": "Careem",
+    "jobs": [
+        {
+            "id": 6301,
+            "title": "Logistics Manager, Dubai",
+            "absolute_url": "https://job-boards.greenhouse.io/careem/jobs/6301",
+            "location": {"name": "Dubai, UAE"},
+            "departments": [{"name": "Operations"}],
+            "content": "<p>Own bus and delivery logistics for the Dubai market.</p>",
+            "updated_at": "2026-09-19T10:00:00+02:00",
+        },
+        {
+            "id": 6302,
+            "title": "Data Scientist",
+            "absolute_url": "https://job-boards.greenhouse.io/careem/jobs/6302",
+            "location": {"name": "Remote (EMEA)"},
+            "departments": [{"name": "Data"}],
+            "content": "<p>Model pricing and ETA. Salary: AED 30,000 - 45,000 monthly.</p>",
+            "updated_at": "2026-09-18T08:00:00+02:00",
+        },
+    ],
+}
+
+LEVER_KITOPI = [
+    {
+        "id": "f47ac10b",
+        "text": "Warehouse Operations Lead",
+        "hostedUrl": "https://jobs.lever.co/kitopi/f47ac10b",
+        "applyUrl": "https://jobs.lever.co/kitopi/f47ac10b/apply",
+        "createdAt": 1789300000000,
+        "country": "AE",
+        "workplaceType": "onsite",
+        "categories": {"location": "Dubai, UAE", "team": "Operations",
+                       "department": "Supply Chain"},
+        "descriptionPlain": "Run cloud-kitchen warehouse operations. Pay AED 25,000 - 35,000.",
+    },
+    {
+        "id": "8c1420de",
+        "text": "Backend Engineer",
+        "hostedUrl": "https://jobs.lever.co/kitopi/8c1420de",
+        "applyUrl": "https://jobs.lever.co/kitopi/8c1420de/apply",
+        "createdAt": 1789200000000,
+        "country": "AE",
+        "workplaceType": "remote",
+        "categories": {"location": "Remote", "team": "Engineering"},
+        "descriptionPlain": "Build order-flow services. Salary: $90,000 - $120,000.",
+        "salaryRange": {"min": 90000, "max": 120000, "currency": "USD"},
+    },
+]
+
+ASHBY = {
+    "apiVersion": "1",
+    "jobs": [
+        {
+            "title": "Freight Pricing Analyst",
+            "location": "Riyadh, Saudi Arabia",
+            "department": "Operations",
+            "team": "Pricing",
+            "isListed": True,
+            "isRemote": False,
+            "workplaceType": "OnSite",
+            "descriptionPlain": "Price lanes across the Gulf corridor.",
+            "publishedAt": "2026-09-15T08:00:00.000+00:00",
+            "employmentType": "FullTime",
+            "address": {"postalAddress": {"addressLocality": "Riyadh",
+                                          "addressCountry": "Saudi Arabia"}},
+            "jobUrl": "https://jobs.ashbyhq.com/flexport/freight-pricing-analyst",
+            "applyUrl": "https://jobs.ashbyhq.com/flexport/freight-pricing-analyst/apply",
+            "compensation": {
+                "summaryComponents": [
+                    {"compensationType": "Salary", "interval": "1 YEAR",
+                     "currencyCode": "SAR", "minValue": 180000, "maxValue": 240000},
+                ],
+            },
+        },
+        {
+            "title": "Unlisted Confidential Role",
+            "location": "Dubai",
+            "isListed": False,
+            "isRemote": False,
+            "workplaceType": "OnSite",
+            "descriptionPlain": "Direct-link only.",
+            "jobUrl": "https://jobs.ashbyhq.com/flexport/confidential",
+        },
+    ],
+}

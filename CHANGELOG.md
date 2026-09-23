@@ -4,6 +4,33 @@ All notable changes to JAUTOMATIC JOB SEARCH are documented here.
 Format: a relaxed [Keep a Changelog](https://keepachangelog.com/) style —
 this project follows [SemVer](https://semver.org/).
 
+## [1.10.0] - 2026-09-23
+
+### Expanded job sites: Gulf focus
+
+- Added **Jobicy** and **Working Nomads** — key-free remote boards whose APIs
+  filter by candidate country, including the UAE and the rest of the Gulf.
+- Added **Company career boards**: one source that polls live openings straight
+  from the employers you list via their public Greenhouse, Lever or Ashby
+  endpoints (no API key, no scraping). Ships with a seeded Gulf + logistics
+  list (Careem, Tamara, Flexport, project44, FourKites) and is editable in
+  Settings; paste a careers-page URL or write `provider:slug`.
+- **Jooble went Gulf-wide**: the UAE source keeps its saved settings and key,
+  and Saudi Arabia, Qatar, Kuwait and Bahrain join as separate sources, each
+  with its own country API key field in Settings (Oman has no Jooble site and
+  stays under More websites). Keys migrate into a per-country map on upgrade.
+- **More websites** now covers the whole Gulf: Bayt, GulfTalent, NaukriGulf,
+  foundit Gulf, Indeed, Dubizzle and Qatar Living join LinkedIn,
+  BrighterMonday and Jobberman, each with its own region dropdown (country or
+  emirate/city). The old combined labels ("Bayt UAE") keep working.
+- Location matching understands **Gulf / GCC / Middle East / MENA** regions and
+  Gulf cities (Riyadh, Jeddah, Doha, Kuwait City, Muscat, Manama…); salary
+  parsing reads SAR, QAR, KWD, OMR, BHD and more.
+- Added a **Gulf logistics** preset next to Africa + UAE logistics, selecting
+  every key-free Gulf-capable source at once.
+- The v2 default source selection expands automatically; custom selections are
+  preserved.
+
 ## [1.9.1] - 2026-09-18
 
 - Prefer installed New Outlook when opening application emails, using its Windows

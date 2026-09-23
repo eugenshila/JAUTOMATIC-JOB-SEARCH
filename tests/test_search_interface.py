@@ -103,3 +103,97 @@ class SearchInterfaceTest(WorkspaceTestCase):
         self.assertFalse(settings.remote_only)
         self.assertTrue(self.tab.source_boxes["myjobmag_ke"].isChecked())
         self.assertIn("jobweb_ug", settings.enabled_sources)
+
+    def test_gulf_preset_selects_the_key_free_gulf_sources(self):
+        self.tab.use_gulf_search()
+        settings = self.workspace.load_settings()
+        self.assertEqual(settings.last_search_location, "Gulf; UAE")
+        self.assertEqual(settings.last_search_query, "logistics")
+        for name in ("jobicy", "workingnomads", "company_boards", "himalayas", "uae_ai"):
+            self.assertTrue(self.tab.source_boxes[name].isChecked(), name)
+        self.assertNotIn("myjobmag_ke", settings.enabled_sources)
+        self.assertFalse(self.tab.remote_only.isChecked())
+
+    def test_browser_website_dropdown_follows_the_board(self):
+        regions = lambda combo: [combo.itemText(i) for i in range(combo.count())]  # noqa: E731
+        self.assertIn("UAE", regions(self.tab.browser_region))
+        self.tab.browser_board.setCurrentText("Bayt")
+        self.assertIn("Saudi Arabia", regions(self.tab.browser_region))
+        self.assertNotIn("Kenya", regions(self.tab.browser_region))
+        self.tab.browser_board.setCurrentText("Jobberman")
+        self.assertIn("Ghana", regions(self.tab.browser_region))
+        self.assertNotIn("Qatar", regions(self.tab.browser_region))
+
+    def test_open_website_uses_the_selected_board_and_region(self):
+        from unittest.mock import patch as qt_patch
+        self.tab.query.setText("driver")
+        self.tab.browser_board.setCurrentText("Bayt")
+        self.tab.browser_region.setCurrentText("Saudi Arabia")
+        with qt_patch("jautomatic.ui.job_search_tab.th.open_in_browser",
+                      return_value=True) as opener:
+            self.tab.open_regional_website()
+        url = opener.call_args[0][0]
+        self.assertEqual(url, "https://www.bayt.com/en/saudi-arabia/jobs/driver-jobs/")
+        self.assertIn("Bayt", self.ctx.notify.call_args[0][0])
+
+
+class SettingsInterfaceTest(WorkspaceTestCase):
+    """The Settings controls for the 1.5 sources round-trip through settings."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        apply_theme(cls.app, "blackgreen")
+
+    def setUp(self):
+        super().setUp()
+        from unittest.mock import Mock
+
+        from jautomatic.ui.settings_tab import SettingsTab
+        settings = AppSettings()
+        self.ctx = SimpleNamespace(
+            settings=settings, profile=Profile(), workspace=self.workspace,
+            pipeline=ApplicationPipeline(self.workspace, settings),
+            add_header_action=Mock(), save_settings=self.workspace.save_settings,
+            notify=Mock(), confirm=Mock(return_value=True), update_meta=Mock(),
+            refresh_all=Mock(), open_preview=Mock(), run_task=Mock(), busy=False,
+        )
+        self.tab = SettingsTab(self.ctx)
+        self.addCleanup(self.tab.close)
+
+    def test_company_boards_and_jooble_keys_round_trip(self):
+        self.tab.boards_edit.setPlainText("greenhouse:careem\njobs.lever.co/kitopi\n\njunk here")
+        self.tab.jooble_uae_key.setText("dubai-key")
+        self.tab.jooble_gulf_keys["sa"].setText("riyadh-key")
+        self.tab.collect()
+        settings = self.workspace.load_settings()
+        # "junk here" is a bare slug -> an unusable Greenhouse board name, dropped.
+        self.assertEqual(settings.company_boards, ["greenhouse:careem", "lever:kitopi"])
+        self.assertEqual(settings.jooble_keys, {"ae": "dubai-key", "sa": "riyadh-key"})
+        self.assertEqual(settings.jooble_uae_key, "")          # the key lives in the map
+
+    def test_board_list_editor_shows_the_saved_list_and_defaults(self):
+        self.ctx.settings.company_boards = ["greenhouse:careem"]
+        self.ctx.settings.jooble_keys = {"qa": "doha-key"}
+        self.tab.load()
+        self.assertEqual(self.tab.boards_edit.toPlainText(), "greenhouse:careem")
+        self.assertEqual(self.tab.jooble_uae_key.text(), "")
+        self.assertEqual(self.tab.jooble_gulf_keys["qa"].text(), "doha-key")
+        self.tab.boards_edit.setPlainText("")                  # empty = the built-in list
+        self.tab.collect()
+        settings = self.workspace.load_settings()
+        self.assertEqual(settings.company_boards, [])
+
+    def test_reset_button_restores_the_builtin_boards(self):
+        from PySide6.QtWidgets import QPushButton
+
+        from jautomatic.services.company_boards import DEFAULT_COMPANY_BOARDS
+        self.tab.boards_edit.setPlainText("greenhouse:careem")
+        reset = next(button for button in self.tab.boards_card.findChildren(QPushButton)
+                     if button.text() == "Reset to built-in list")
+        reset.click()
+        self.assertEqual(self.tab.boards_edit.toPlainText(),
+                         "\n".join(DEFAULT_COMPANY_BOARDS))
+        self.tab.collect()
+        settings = self.workspace.load_settings()
+        self.assertEqual(len(settings.company_boards), len(DEFAULT_COMPANY_BOARDS))

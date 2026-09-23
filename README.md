@@ -1,4 +1,4 @@
-﻿# JAUTOMATIC JOB SEARCH
+# JAUTOMATIC JOB SEARCH
 
 A local-first desktop job-search autopilot. It pulls postings from public job boards,
 scores every one against **your** profile, then writes a tailored CV, cover letter and
@@ -75,7 +75,7 @@ band, and questions to ask them. Answers are stored per question, starred questi
 up, you can add your own, regenerating never overwrites what you wrote, and the sheet
 exports to Markdown/Word next to your CV.
 
-**Settings** — enable/disable sources, Adzuna credentials, search defaults, document
+**Settings** — enable/disable sources, company career boards, Adzuna and Jooble keys, search defaults, document
 options (template, format, letter/e-mail toggles, custom-template helpers), autopilot
 thresholds, follow-up window, dark/light theme, and data tools (open folder, backup, CSV
 export, calendar export, clear cache).
@@ -160,7 +160,7 @@ By default in your user data folder (`%APPDATA%\JAUTOMATIC` on Windows,
 
 ```
 profile.json          your details (also editable by hand / exportable / importable)
-settings.json         sources, defaults, theme
+settings.json         sources, career boards, keys, defaults, theme
 jautomatic.sqlite3    postings + applications (SQLite, WAL) incl. interview-prep sheets
 documents/            generated CVs, cover letters, e-mail drafts, follow-ups, prep sheets
 exports/              CSV tracker exports + .ics calendar exports
@@ -211,31 +211,48 @@ Existing saved theme preferences are preserved; change them in **Settings → Ap
 | [Arbeitnow](https://www.arbeitnow.com) | no | European board, JSON API |
 | [RemoteOK](https://remoteok.com) | no | remote-first board, JSON API |
 | [Himalayas](https://himalayas.app) | no | remote roles worldwide incl. Kenya/Africa/UAE, JSON API |
+| [Jobicy](https://jobicy.com) | no | remote roles worldwide incl. UAE/Gulf, JSON API |
+| [Working Nomads](https://www.workingnomads.com) | no | curated remote roles, JSON API |
 | [UAE AI jobs](https://artificial.ae) | no | UAE AI & tech roles (Dubai, Abu Dhabi), JSON API |
+| Company career boards | no | live openings from the employers you list, via public Greenhouse / Lever / Ashby APIs |
 | [Adzuna](https://developer.adzuna.com) | free app id + key | aggregated listings, 21 countries incl. South Africa |
 | MyJobMag | no | publisher feeds for Kenya, Nigeria and South Africa |
 | JobWeb | no | publisher feeds for Kenya, Uganda and Tanzania |
-| [Jooble UAE](https://ae.jooble.org/api/about) | UAE-specific API key | UAE vacancies across industries; enter the key in Settings |
+| [Jooble](https://ae.jooble.org/api/about) | one key per country | UAE, Saudi Arabia, Qatar, Kuwait and Bahrain vacancies; enter each country's key in Settings (Oman has no Jooble site) |
 | [LinkedIn](https://www.linkedin.com/jobs/search) | browser session | open a search, then import the URL or use **Paste job details** |
-| Bayt, GulfTalent, BrighterMonday, Jobberman | browser access | open from **More websites**, then paste the job details to track it |
+| Bayt, GulfTalent, NaukriGulf, foundit Gulf, Indeed, Dubizzle, Qatar Living, BrighterMonday, Jobberman | browser access | open from **More websites** (each with its own region dropdown), then paste the job details to track it |
 | Demo data | no | offline sample postings so the app is always usable |
 
 Sources are queried in parallel; a failing board is reported in the results line ("issues:
 Remotive: timed out") and never blocks the others. If *no* board can be reached, the app
 offers clearly-labelled demo postings so the workflow can still be explored.
 
-For regional logistics vacancies, click **Africa + UAE logistics**, then **Search jobs**.
-The preset includes on-site jobs and searches related procurement, warehouse, freight
-and supply-chain titles. Africa matches individual African countries; UAE matches
-Dubai, Abu Dhabi and other supported emirate names. Feed coverage varies by publisher.
-The old three-source default is expanded automatically; custom source selections remain intact.
-Jooble requires a UAE-specific key for automatic UAE aggregation. The **More websites**
-menu provides LinkedIn Africa/UAE and other regional searches in your browser.
+For regional logistics vacancies, click **Gulf logistics** or **Africa + UAE logistics**,
+then **Search jobs**. Both presets include on-site jobs and search related procurement,
+warehouse, freight and supply-chain titles. Africa matches individual African countries;
+the Gulf matches the UAE, Saudi Arabia, Qatar, Kuwait, Oman and Bahrain — including city
+names such as Dubai, Riyadh, Doha or Muscat. Feed coverage varies by publisher.
+The previous default source selection is expanded automatically on upgrade; custom
+source selections remain intact.
+
+**Company career boards** poll each listed employer's public job board directly
+(Greenhouse, Lever or Ashby — the same JSON their careers pages read), so a posting
+appears the day the company publishes it. Add boards in Settings by pasting a
+careers-page URL (`https://jobs.lever.co/kitopi`) or writing `provider:slug`
+(`greenhouse:careem`); a board that has moved is skipped and reported. Boards are
+fetched in parallel with a cap of 12 per search.
+
+Jooble runs one website per country and each country needs its own free API key
+(a US key will not return UAE jobs, and vice versa). Free keys are limited to 500
+lifetime requests; automatic refresh also uses this quota. Without keys, the Gulf
+**More websites** menu (Bayt, GulfTalent, NaukriGulf, foundit Gulf, Indeed, Dubizzle,
+Qatar Living) opens the same searches in your browser.
 **Paste job details** saves a copied posting for matching and application preparation;
 it does not connect a LinkedIn account or submit applications.
 
 Adding a board = subclass `JobSource` in `jautomatic/services/job_scraper.py` (set `name`,
-`label`, implement `fetch()`), then register it in `default_sources()`.
+`label`, implement `fetch()`), then register it in `default_sources()`. Company ATS
+boards live in `jautomatic/services/company_boards.py`.
 
 ## Generated documents
 
@@ -270,6 +287,7 @@ jautomatic/
   models.py                          dataclasses, scoring helpers, SQLite/JSON workspace
   services/
     job_scraper.py                   sources, query filtering, de-dup, offline fallback
+    company_boards.py                employer ATS boards (Greenhouse/Lever/Ashby), Gulf browser catalog
     application_pipeline.py          matching, ranking, tracking, autopilot, CSV export
     calendar_export.py               RFC 5545 .ics export (interviews + follow-ups)
     autofill.py                      deterministic form parser, taxonomy, fill planner

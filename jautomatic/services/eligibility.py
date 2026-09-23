@@ -12,7 +12,12 @@ COUNTRIES = {
     "UG": ("uganda",), "TZ": ("tanzania",), "EG": ("egypt",),
     "AE": ("united arab emirates", "uae",), "IN": ("india",),
     "SG": ("singapore",), "BR": ("brazil",), "MX": ("mexico",),
+    # Gulf (GCC) states: the region the UAE search presets and boards cover.
+    "SA": ("saudi arabia", "ksa", "kingdom of saudi arabia"),
+    "QA": ("qatar",), "KW": ("kuwait",), "OM": ("oman",), "BH": ("bahrain",),
 }
+#: The six Gulf Cooperation Council states, in the order the UI lists them.
+GULF_COUNTRIES = ("AE", "SA", "QA", "KW", "OM", "BH")
 REGIONS = {
     "africa": {"KE", "ZA", "NG", "GH", "UG", "TZ", "EG"},
     "europe": {"GB", "DE", "FR", "NL", "IE", "ES", "IT", "PL"},
@@ -20,8 +25,13 @@ REGIONS = {
     "north america": {"US", "CA", "MX"},
     "latam": {"BR", "MX"},
     "asia": {"IN", "SG", "AE"},
+    "gulf": set(GULF_COUNTRIES),
+    "gcc": set(GULF_COUNTRIES),
+    "middle east": set(GULF_COUNTRIES) | {"EG"},
 }
-REGIONS["emea"] = REGIONS["europe"] | REGIONS["africa"] | {"AE"}
+# "MENA" stretches into North Africa; every code here must stay recognisable.
+REGIONS["mena"] = set(GULF_COUNTRIES) | {"EG", "MA", "TN", "DZ", "LY"}
+REGIONS["emea"] = REGIONS["europe"] | REGIONS["africa"] | set(GULF_COUNTRIES)
 
 
 def _contains(text: str, term: str) -> bool:
