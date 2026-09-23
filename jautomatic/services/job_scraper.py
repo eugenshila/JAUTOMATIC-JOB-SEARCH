@@ -1266,7 +1266,7 @@ class JobScraper:
         seen: set[str] = set()
         unique: list[JobPosting] = []
         for job in jobs:
-            fingerprint = job.fingerprint
+            fingerprint = job.vacancy_key or job.fingerprint
             if fingerprint in seen:
                 continue
             seen.add(fingerprint)

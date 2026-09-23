@@ -197,3 +197,87 @@ class SettingsInterfaceTest(WorkspaceTestCase):
         self.tab.collect()
         settings = self.workspace.load_settings()
         self.assertEqual(len(settings.company_boards), len(DEFAULT_COMPANY_BOARDS))
+
+    def test_move_only_checked_results(self):
+        from PySide6.QtCore import Qt
+        self.ctx.tabs = {'applications': Mock(), 'dashboard': Mock()}
+        jobs = [JobPosting(title=title, company='Example') for title in ('First', 'Second')]
+        self.tab.show_result_outcome(SearchOutcome(jobs=jobs))
+        self.assertEqual(self.workspace.applications(), [])
+        self.tab.table.item(1, 0).setCheckState(Qt.Checked)
+        chosen = self.tab._job_for_row(1).job_id
+        self.tab._move_checked_to_queue()
+        self.assertEqual([a.job_id for a in self.workspace.applications()], [chosen])
+        self.tab._move_checked_to_queue()
+        self.assertEqual(len(self.workspace.applications()), 1)
+
+    def test_search_does_not_queue_even_with_old_auto_setting(self):
+        from threading import Event
+        self.ctx.settings.auto_track_qualified = True
+        self.ctx.cancel_event = Event()
+        self.ctx.tabs = {'applications': Mock(), 'dashboard': Mock()}
+        self.ctx.update_meta = Mock()
+        self.ctx.run_task = lambda title, work, done, *args: done(work())
+        self.ctx.pipeline.scraper.search = Mock(return_value=SearchOutcome(jobs=[
+            JobPosting(title='IT support', company='Example')]))
+        self.tab.query.setText('IT support')
+        self.tab.start_search(True)
+        self.assertEqual(self.workspace.applications(), [])
+        self.assertEqual(self.workspace.job_count(), 1)
+
+    def test_clear_checked_jobs_hides_them_after_refresh_and_repeat_search(self):
+        from PySide6.QtCore import Qt
+        self.ctx.tabs = {'applications': Mock(), 'dashboard': Mock()}
+        jobs=[JobPosting(title=title,company='Example',url='https://example.org/'+title) for title in ('First','Second','Third')]
+        self.tab.show_result_outcome(SearchOutcome(jobs=jobs))
+        self.tab.table.item(1,0).setCheckState(Qt.Checked)
+        self.tab.table.item(2,0).setCheckState(Qt.Checked)
+        self.tab._clear_selected()
+        self.assertEqual(self.tab.table.rowCount(),1)
+        self.tab.refresh(); self.assertEqual(self.tab.table.rowCount(),1)
+        self.tab.show_result_outcome(SearchOutcome(jobs=jobs))
+        self.assertEqual(self.tab.table.rowCount(),1)
+        self.ctx.settings=self.workspace.load_settings()
+        reopened=JobSearchTab(self.ctx)
+        try:
+            reopened.refresh(); self.assertEqual(reopened.table.rowCount(),1)
+        finally: reopened.close()
+
+    def test_clear_highlighted_sent_job_keeps_sent_history(self):
+        from jautomatic.models import ApplicationStatus
+        self.ctx.tabs = {'applications': Mock(), 'dashboard': Mock()}
+        job=JobPosting(title='Already sent',company='Example')
+        app=self.ctx.pipeline.ensure_application(job)
+        self.ctx.pipeline.set_status(app,ApplicationStatus.SENT)
+        self.tab.show_result_outcome(SearchOutcome(jobs=[job]))
+        self.tab._clear_selected()
+        self.assertEqual(self.tab.table.rowCount(),0)
+        self.assertEqual(self.tab.description.toPlainText(),'')
+        self.assertEqual(self.workspace.get_application(app.application_id).status_enum,ApplicationStatus.SENT)
+
+    def test_select_all_only_checks_visible_results_and_can_deselect(self):
+        from PySide6.QtCore import Qt
+        self.tab.ranked=[(JobPosting(title=str(score)),MatchResult(score=score)) for score in (60,80,90)]
+        self.tab.eligible_only.setChecked(True)
+        self.tab._fill_table()
+        self.tab._set_all_checked(True)
+        self.assertEqual(self.tab.table.rowCount(),2)
+        self.assertTrue(all(self.tab.table.item(row,0).checkState()==Qt.Checked for row in range(2)))
+        self.tab._set_all_checked(False)
+        self.assertTrue(all(self.tab.table.item(row,0).checkState()==Qt.Unchecked for row in range(2)))
+
+    def test_show_cleared_recovers_results_without_requeuing(self):
+        from jautomatic.models import ApplicationStatus
+        self.ctx.tabs={'applications':Mock(),'dashboard':Mock()}
+        job=JobPosting(title='Repeated vacancy',company='Example')
+        self.tab.show_result_outcome(SearchOutcome(jobs=[job]))
+        self.tab._clear_selected()
+        self.assertEqual(self.tab.table.rowCount(),0)
+        self.assertIn('Show cleared jobs',self.tab.empty_results.text())
+        self.tab.show_cleared.setChecked(True)
+        self.assertEqual(self.tab.table.rowCount(),1)
+        self.assertIn('Archived',self.tab.table.item(0,1).text())
+        self.assertEqual(self.workspace.application_for_job(job.job_id).status_enum,ApplicationStatus.ARCHIVED)
+        self.tab.show_cleared.setChecked(False)
+        self.assertEqual(self.tab.table.rowCount(),0)
+

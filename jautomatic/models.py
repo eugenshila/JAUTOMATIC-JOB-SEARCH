@@ -383,6 +383,16 @@ class JobPosting:
 
     # -- derived ---------------------------------------------------------- #
     @property
+    def vacancy_key(self) -> str:
+        """Cross-board identity requested by the user: employer and position."""
+        def clean(value):
+            return re.sub(r"\s+", " ", value.casefold()).strip().rstrip(".,")
+        company, title = clean(self.company), clean(self.title)
+        if not title or company in {"", "unknown", "confidential", "employer not supplied"}:
+            return ""
+        return company + "|" + title
+
+    @property
     def fingerprint(self) -> str:
         """Stable identity of a posting: its URL when we have one, else company+title.
 
@@ -838,8 +848,9 @@ class AppSettings:
     export_format: str = "docx"           # docx | pdf | docx_pdf | md | txt
     min_salary: int = 0
     min_match_score: int = 80               # qualification bar; results stay visible for review
-    auto_track_qualified: bool = True       # search results at/above min_match_score go to the queue
-    min_pay_usd: int = 10                   # Tasks search: only gigs advertising >= this per task (0 = off)
+    auto_track_qualified: bool = False      # search results at/above min_match_score go to the queue
+    min_pay_usd: int = 2                    # Tasks search: only gigs advertising >= this per task (0 = off)
+    task_search_query: str = ""            # independent of the main job search
     max_post_age_days: int = 5              # hide postings older than this (0 = any age)
     remote_only: bool = False
     exclude_keywords: str = ""            # comma separated, filters out postings
@@ -848,6 +859,7 @@ class AppSettings:
     adzuna_app_key: str = ""
     adzuna_country: str = "gb"
     last_search_query: str = ""
+    search_hidden_job_ids: list[str] = field(default_factory=list)
     last_search_job_ids: list[str] | None = None  # None means no saved search yet
     auto_refresh_enabled: bool = False    # timed re-scrape of the enabled boards
     auto_refresh_minutes: int = 30        # every N minutes when enabled
@@ -1055,7 +1067,20 @@ class Workspace:
         """Insert new postings, refresh the ones we already know. Returns #new."""
         new = 0
         cursor = self._conn
+        applications = {app.job_id: app for app in self.applications()}
+        def priority(job):
+            app = applications.get(job.job_id)
+            return (bool(app and (app.sent_at or app.status_enum in (
+                ApplicationStatus.SENT, ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER))),
+                bool(app and app.status_enum.is_closed), bool(app))
+        known = {job.vacancy_key: job for job in sorted(self.jobs(limit=1000000), key=priority)
+                 if job.vacancy_key}
         for job in jobs:
+            canonical = known.get(job.vacancy_key)
+            if canonical and canonical.fingerprint != job.fingerprint:
+                # Keep the original posting and its application history intact.
+                job.job_id = canonical.job_id
+                continue
             existing = cursor.execute("SELECT job_id FROM jobs WHERE fingerprint=?",
                                       (job.fingerprint,)).fetchone()
             if not existing and "?" in job.url:
@@ -1084,6 +1109,8 @@ class Workspace:
                  int(job.remote), job.salary_min, job.salary_max, job.currency, job.url,
                  job.description, json.dumps(job.tags), job.posted_at, job.fetched_at))
             new += 1
+            if job.vacancy_key:
+                known[job.vacancy_key] = job
         self._conn.commit()
         return new
 
