@@ -536,8 +536,11 @@ class PublishReleaseWorkflowTest(unittest.TestCase):
     def test_workflow_exists_and_is_manual(self):
         self.assertTrue(self.WORKFLOW.is_file())
         self.assertIn("workflow_dispatch", self.text)
+        self.assertIn("workflow_run", self.text)
+        self.assertIn("windows-installer", self.text)
         self.assertIn("contents: write", self.text)
         self.assertIn("actions: read", self.text)
+        self.assertIn("already exists", self.text)
 
     def test_attaches_verified_msi_from_windows_installer_run(self):
         self.assertIn("gh run download", self.text)
