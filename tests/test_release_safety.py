@@ -45,8 +45,8 @@ class ReleaseSafetyTests(WorkspaceTestCase):
         preserved = list(self.workspace.root.glob("profile.corrupt-*.json"))
         self.assertEqual(preserved[0].read_text("utf-8"), "{broken")
 
-    def test_settings_recover_and_defaults_still_auto_queue(self):
-        self.assertTrue(self.workspace.load_settings().auto_track_qualified)
+    def test_settings_recover_and_defaults_keep_the_queue_off(self):
+        self.assertFalse(self.workspace.load_settings().auto_track_qualified)
         self.workspace.save_settings(AppSettings(theme="daylight"))
         self.workspace.save_settings(AppSettings(theme="blackgreen"))
         self.workspace.settings_path.write_text("[]", encoding="utf-8")

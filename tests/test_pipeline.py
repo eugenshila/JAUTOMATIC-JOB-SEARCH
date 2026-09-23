@@ -932,9 +932,11 @@ class ClearTests(WorkspaceTestCase):
     def test_default_setting_has_clear_days(self):
         self.assertEqual(AppSettings().auto_clear_days, 5)
 
-    def test_default_auto_tracks_qualified_results(self):
-        self.assertTrue(AppSettings().auto_track_qualified)
-        self.assertFalse(AppSettings.from_dict({"auto_track_qualified": False}).auto_track_qualified)
+    def test_default_does_not_auto_track_qualified_results(self):
+        # The queue-rules change (1.10): imports wait for explicit review instead
+        # of auto-queuing every qualified result.
+        self.assertFalse(AppSettings().auto_track_qualified)
+        self.assertTrue(AppSettings.from_dict({"auto_track_qualified": True}).auto_track_qualified)
 
     def test_pending_auto_clear_previews_without_changing(self):
         old_created = (date.today() - timedelta(days=10)).isoformat() + " 00:00:00"

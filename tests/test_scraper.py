@@ -588,12 +588,12 @@ class CrossSourceDedupeTests(unittest.TestCase):
         self.assertEqual(outcome.jobs[0].title, "Warehouse Lead")
         self.assertIn("2 board(s) responded", outcome.summary())
 
-    def test_same_job_at_different_urls_is_listed_once_per_link(self):
-        """Identity is the link: the same vacancy posted with two URLs stays twice.
+    def test_same_vacancy_on_two_boards_is_picked_once(self):
+        """The user's rule: the same employer+position found on several boards is one job.
 
-        Boards relink the same vacancy to their own pages, and the tracker keeps
-        documents per posting, so an unconfirmed "same job" guess would silently
-        merge distinct applications. URL-first keeps every apply path usable.
+        ``JobPosting.vacancy_key`` (company|title, punctuation/case-insensitive)
+        dedupes across websites even when every board links the vacancy at its
+        own URL; the tracker keeps that single entry and its status.
         """
         remotive = {"jobs": [{
             "id": 1, "url": "https://remotive.com/jobs/warehouse-lead",
@@ -602,9 +602,26 @@ class CrossSourceDedupeTests(unittest.TestCase):
             "publication_date": "2026-09-20T08:00:00", "tags": [],
             "description": "<p>Run the warehouse.</p>"}]}
         arbeitnow = {"data": [{
-            "slug": "warehouse-lead-2", "company_name": "Kestrel", "title": "Warehouse Lead",
+            "slug": "warehouse-lead-2", "company_name": "Kestrel", "title": "WAREHOUSE LEAD.",
             "description": "<p>Run the warehouse.</p>", "remote": False,
             "url": "https://www.arbeitnow.com/jobs/warehouse-lead", "tags": [],
+            "job_types": [], "location": "Berlin", "created_at": 1789000000}]}
+        outcome = self._search({"remotive": remotive, "arbeitnow": arbeitnow})
+        self.assertEqual(len(outcome.jobs), 1)
+        self.assertEqual(outcome.jobs[0].source, "remotive")     # the first board wins
+        self.assertIn("2 board(s) responded", outcome.summary())
+
+    def test_different_vacancies_at_the_same_company_both_survive(self):
+        remotive = {"jobs": [{
+            "id": 1, "url": "https://remotive.com/jobs/warehouse-lead",
+            "title": "Warehouse Lead", "company_name": "Kestrel",
+            "candidate_required_location": "Worldwide", "salary": "",
+            "publication_date": "2026-09-20T08:00:00", "tags": [],
+            "description": "<p>Run the warehouse.</p>"}]}
+        arbeitnow = {"data": [{
+            "slug": "driver", "company_name": "Kestrel", "title": "Delivery Driver",
+            "description": "<p>Drive deliveries.</p>", "remote": False,
+            "url": "https://www.arbeitnow.com/jobs/driver", "tags": [],
             "job_types": [], "location": "Berlin", "created_at": 1789000000}]}
         outcome = self._search({"remotive": remotive, "arbeitnow": arbeitnow})
         self.assertEqual(len(outcome.jobs), 2)
