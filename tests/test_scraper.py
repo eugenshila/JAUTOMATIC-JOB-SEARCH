@@ -505,3 +505,123 @@ class TaskSourceTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class FreshnessTests(unittest.TestCase):
+    """The posting-age cap: results stay within the user's freshness window."""
+
+    def _payload(self, **ages) -> dict:
+        from datetime import date, timedelta
+        jobs = []
+        for index, (name, days) in enumerate(ages.items()):
+            posted = (date.today() - timedelta(days=days)).isoformat() if days >= 0 else ""
+            jobs.append({"id": 700 + index, "url": f"https://remotive.com/remote-jobs/{name}",
+                         "title": name.replace("-", " ").title(), "company_name": "Example",
+                         "candidate_required_location": "Worldwide", "salary": "",
+                         "publication_date": posted, "tags": [],
+                         "description": f"<p>{name} role for the example team.</p>"})
+        return {"jobs": jobs}
+
+    def _run(self, payload, **query_kwargs):
+        with mock.patch.object(job_scraper, "_request_json", return_value=payload):
+            outcome = JobScraper(AppSettings(), sources=[RemotiveSource()]).search(
+                SearchQuery(sources=["remotive"], limit_per_source=10, **query_kwargs))
+        return outcome.jobs
+
+    def test_cap_keeps_recent_and_drops_old(self):
+        payload = self._payload(fresh=2, borderline=5, stale=6, ancient=30)
+        jobs = self._run(payload, max_post_age_days=5)
+        self.assertEqual([job.title for job in jobs], ["Fresh", "Borderline"])
+
+    def test_cap_off_keeps_everything(self):
+        jobs = self._run(self._payload(fresh=2, stale=40), max_post_age_days=0)
+        self.assertEqual(len(jobs), 2)
+
+    def test_unknown_dates_are_hidden_while_the_cap_is_on(self):
+        payload = self._payload(dated=1, undated=-1)      # -1 -> no publication_date
+        self.assertEqual([job.title for job in self._run(payload, max_post_age_days=5)],
+                         ["Dated"])
+        self.assertEqual(len(self._run(payload, max_post_age_days=0)), 2)
+
+    def test_settings_default_to_five_days_and_reach_queries(self):
+        from jautomatic.services.application_pipeline import ApplicationPipeline
+        settings = AppSettings()
+        self.assertEqual(settings.max_post_age_days, 5)
+        pipeline = ApplicationPipeline.__new__(ApplicationPipeline)
+        pipeline.settings = settings
+        pipeline.workspace = mock.Mock(load_profile=mock.Mock(return_value=mock.Mock(currency="USD")))
+        query = pipeline.build_query("driver")
+        self.assertEqual(query.max_post_age_days, 5)
+        self.assertEqual(SearchQuery().max_post_age_days, 0)   # explicit queries opt in
+
+
+class CrossSourceDedupeTests(unittest.TestCase):
+    """One posting = one entry, no matter how many boards returned it."""
+
+    def _search(self, payloads):
+        def fake(url, timeout, params=None):  # noqa: ANN001
+            for marker, payload in payloads.items():
+                if marker in url:
+                    return payload
+            raise AssertionError(url)
+
+        sources = [RemotiveSource(), ArbeitnowSource()]
+        with mock.patch.object(job_scraper, "_request_json", side_effect=fake):
+            return JobScraper(AppSettings(), sources=sources).search(
+                SearchQuery(text="", sources=["remotive", "arbeitnow"],
+                            limit_per_source=25))
+
+    def test_same_url_on_two_boards_appears_once(self):
+        shared = {"jobs": [{
+            "id": 1, "url": "https://example.com/jobs/warehouse-lead",
+            "title": "Warehouse Lead", "company_name": "Kestrel",
+            "candidate_required_location": "Worldwide", "salary": "",
+            "publication_date": "2026-09-20T08:00:00", "tags": [],
+            "description": "<p>Run the warehouse.</p>"}]}
+        payload = {"data": [{
+            "slug": "warehouse-lead", "company_name": "Kestrel", "title": "Warehouse Lead",
+            "description": "<p>Run the warehouse.</p>", "remote": False,
+            "url": "https://example.com/jobs/warehouse-lead", "tags": [],
+            "job_types": [], "location": "Berlin", "created_at": 1789000000}]}
+        outcome = self._search({"remotive": shared, "arbeitnow": payload})
+        self.assertEqual(len(outcome.jobs), 1)
+        self.assertEqual(outcome.jobs[0].title, "Warehouse Lead")
+        self.assertIn("2 board(s) responded", outcome.summary())
+
+    def test_same_vacancy_on_two_boards_is_picked_once(self):
+        """The user's rule: the same employer+position found on several boards is one job.
+
+        ``JobPosting.vacancy_key`` (company|title, punctuation/case-insensitive)
+        dedupes across websites even when every board links the vacancy at its
+        own URL; the tracker keeps that single entry and its status.
+        """
+        remotive = {"jobs": [{
+            "id": 1, "url": "https://remotive.com/jobs/warehouse-lead",
+            "title": "Warehouse Lead", "company_name": "Kestrel",
+            "candidate_required_location": "Worldwide", "salary": "",
+            "publication_date": "2026-09-20T08:00:00", "tags": [],
+            "description": "<p>Run the warehouse.</p>"}]}
+        arbeitnow = {"data": [{
+            "slug": "warehouse-lead-2", "company_name": "Kestrel", "title": "WAREHOUSE LEAD.",
+            "description": "<p>Run the warehouse.</p>", "remote": False,
+            "url": "https://www.arbeitnow.com/jobs/warehouse-lead", "tags": [],
+            "job_types": [], "location": "Berlin", "created_at": 1789000000}]}
+        outcome = self._search({"remotive": remotive, "arbeitnow": arbeitnow})
+        self.assertEqual(len(outcome.jobs), 1)
+        self.assertEqual(outcome.jobs[0].source, "remotive")     # the first board wins
+        self.assertIn("2 board(s) responded", outcome.summary())
+
+    def test_different_vacancies_at_the_same_company_both_survive(self):
+        remotive = {"jobs": [{
+            "id": 1, "url": "https://remotive.com/jobs/warehouse-lead",
+            "title": "Warehouse Lead", "company_name": "Kestrel",
+            "candidate_required_location": "Worldwide", "salary": "",
+            "publication_date": "2026-09-20T08:00:00", "tags": [],
+            "description": "<p>Run the warehouse.</p>"}]}
+        arbeitnow = {"data": [{
+            "slug": "driver", "company_name": "Kestrel", "title": "Delivery Driver",
+            "description": "<p>Drive deliveries.</p>", "remote": False,
+            "url": "https://www.arbeitnow.com/jobs/driver", "tags": [],
+            "job_types": [], "location": "Berlin", "created_at": 1789000000}]}
+        outcome = self._search({"remotive": remotive, "arbeitnow": arbeitnow})
+        self.assertEqual(len(outcome.jobs), 2)

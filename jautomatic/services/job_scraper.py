@@ -33,7 +33,8 @@ USER_AGENT = (
     "job-search-desktop-app"
 )
 
-CURRENCY = r"[$€£]|USD|EUR|GBP|PLN|CHF|SEK|NOK|DKK|CAD|AUD|INR|BRL|KES|AED|ZAR|NGN"
+CURRENCY = (r"[$€£]|USD|EUR|GBP|PLN|CHF|SEK|NOK|DKK|CAD|AUD|INR|BRL|KES|AED|ZAR|NGN|"
+            r"SAR|QAR|KWD|OMR|BHD|EGP|GHS|TZS|UGX|MAD")
 _NUMBER = r"\d[\d.,]*\s*[kK]?"
 MONEY_RANGE_RE = re.compile(
     rf"(?:(?P<cur1>{CURRENCY})\s*)?(?P<low>{_NUMBER})\s*(?:-|–|—|to|until)\s*"
@@ -46,7 +47,7 @@ CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP"}
 # Words that make a number look like pay rather than a year or a head-count.
 MONEY_HINTS = ("salary", "pay", "compensation", "package", "rate", "per annum", "p.a.",
                "gross", "net", "usd", "eur", "gbp", "pln", "k/year", "annually", "monthly",
-               "kes", "aed", "zar", "ngn")
+               "kes", "aed", "zar", "ngn", "sar", "qar", "kwd", "omr", "bhd")
 
 
 def _to_int(text: str) -> int:
@@ -340,6 +341,10 @@ class SearchQuery:
     sources: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
     include_sample: bool = False
+    #: Postings older than this are dropped after the fetch (0 = any age).
+    #: Boards rarely agree on clock or timezone, so the comparison uses whole
+    #: days and the limit is inclusive: "5" keeps a posting from 5 days ago.
+    max_post_age_days: int = 0
 
     @property
     def terms(self) -> list[str]:
@@ -599,7 +604,52 @@ _COUNTRY_ALIASES = {
     "ng": "NG", "nigeria": "NG", "lagos": "NG",
     "gh": "GH", "ghana": "GH", "eg": "EG", "egypt": "EG", "ma": "MA", "morocco": "MA",
     "ke,ug,tz": "KE",
+    # Gulf states: Himalayas filters remote roles by the candidate's country.
+    "sa": "SA", "sau": "SA", "saudi arabia": "SA", "ksa": "SA", "riyadh": "SA", "jeddah": "SA",
+    "qa": "QA", "qatar": "QA", "doha": "QA",
+    "kw": "KW", "kuwait": "KW", "om": "OM", "oman": "OM", "muscat": "OM",
+    "bh": "BH", "bahrain": "BH", "manama": "BH",
 }
+
+#: Country code -> Jobicy ``geo`` slug (from https://jobicy.com/api/v2/remote-jobs?get=locations).
+#: Only the geographies Jobicy actually filters on; anything else stays worldwide.
+JOBIKY_GEO_BY_CODE = {
+    "AE": "united-arab-emirates", "US": "usa", "CA": "canada", "GB": "uk", "IE": "ireland",
+    "DE": "germany", "FR": "france", "NL": "netherlands", "ES": "spain", "IT": "italy",
+    "PL": "poland", "PT": "portugal", "RO": "romania", "CH": "switzerland", "AT": "austria",
+    "BE": "belgium", "SE": "sweden", "NO": "norway", "DK": "denmark", "FI": "finland",
+    "CZ": "czechia", "GR": "greece", "HU": "hungary", "UA": "ukraine", "IN": "india",
+    "SG": "singapore", "AU": "australia", "NZ": "new-zealand", "PH": "philippines",
+    "JP": "japan", "KR": "south-korea", "TH": "thailand", "VN": "vietnam", "CN": "china",
+    "HK": "hong-kong", "MY": "malaysia", "BR": "brazil", "MX": "mexico", "AR": "argentina",
+    "CR": "costa-rica", "IL": "israel", "TR": "turkiye",
+}
+#: Region words Jobicy accepts as a ``geo`` slug. A region with no single Jobicy
+#: slug ("Gulf" covers six countries, "Africa" none) stays unfiltered: the
+#: location filter in ``JobScraper`` then keeps the worldwide roles.
+JOBIKY_GEO_BY_REGION = {"europe": "europe", "eu": "europe", "emea": "emea", "apac": "apac",
+                        "latam": "latam", "africa": "", "north america": "usa",
+                        "gulf": "", "gcc": "", "middle east": "emea", "mena": "emea"}
+
+
+def jobicy_geo(location: str) -> str:
+    """Jobicy ``geo`` slug for a searched location ("" = no geo filter).
+
+    Only a single, unambiguous country becomes a filter: Jobicy has no slug for
+    Africa or for the Gulf as a whole, and a multi-country search ("Africa; UAE")
+    is better served by worldwide roles that the shared location filter keeps.
+    """
+    from .job_regions import country_codes, normalise, region_codes
+    text = normalise(location or "").strip()
+    if not text:
+        return ""
+    if text in JOBIKY_GEO_BY_REGION:
+        return JOBIKY_GEO_BY_REGION[text]
+    if re.search(r"[;,|]|\s+(?:and|or|&)\s+", location or ""):
+        return ""
+    codes = country_codes(location) | region_codes(location)
+    slugs = {JOBIKY_GEO_BY_CODE[code] for code in codes if code in JOBIKY_GEO_BY_CODE}
+    return slugs.pop() if len(slugs) == 1 else ""
 
 
 class HimalayasSource(JobSource):
@@ -697,9 +747,116 @@ class ArtificialAeSource(JobSource):
         return jobs
 
 
+class JobicySource(JobSource):
+    """Remote roles from Jobicy - free public JSON API (no key).
+
+    Jobicy filters by ``geo`` slug, and its location list includes
+    ``united-arab-emirates``, so a Gulf search really is restricted to roles open
+    to Gulf candidates (worldwide roles are included by Jobicy itself).
+    """
+
+    name = "jobicy"
+    label = "Jobicy"
+    description = "Remote roles worldwide incl. UAE/Gulf, Europe, USA - free JSON API (no key)."
+    homepage = "https://jobicy.com"
+
+    def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
+        params: dict[str, object] = {"count": min(200, max(query.limit_per_source, 5))}
+        if query.text.strip():
+            params["tag"] = query.text.strip()
+        geo = jobicy_geo(query.location)
+        if geo:
+            params["geo"] = geo
+        payload = _request_json("https://jobicy.com/api/v2/remote-jobs", timeout, params)
+        terms = query.terms
+        jobs: list[JobPosting] = []
+        loose: list[JobPosting] = []
+        for item in (payload or {}).get("jobs", []):
+            if not isinstance(item, dict):
+                continue
+            title = _clean(item.get("jobTitle"))
+            if not title:
+                continue
+            description = _clean(item.get("jobDescription") or item.get("jobExcerpt"))
+            industries = [_clean(v) for v in (item.get("jobIndustry") or []) if _clean(v)]
+            haystack = f"{title} {description} {' '.join(industries)}".lower()
+            if terms:
+                if query_matches(haystack, terms):
+                    strict_match = True
+                elif query_matches(haystack, terms, require_all=False):
+                    strict_match = False
+                else:
+                    continue
+            else:
+                strict_match = True
+            salary_min = int(item.get("salaryMin") or 0)
+            salary_max = int(item.get("salaryMax") or 0)
+            period = str(item.get("salaryPeriod") or "yearly").lower()
+            if period in ("monthly", "month"):
+                salary_min, salary_max = salary_min * 12, salary_max * 12
+            elif period not in ("yearly", "annual", "annually", "year"):
+                salary_min = salary_max = 0   # hourly/day rates are not comparable
+            geo_name = _clean(item.get("jobGeo"))
+            location = "Remote (Worldwide)" if geo_name.lower() in ("anywhere", "") else f"Remote ({geo_name})"
+            posting = JobPosting(
+                source=self.name, title=title, company=_clean(item.get("companyName")),
+                location=location, remote=True, salary_min=salary_min, salary_max=salary_max,
+                currency=_clean(item.get("salaryCurrency")).upper(),
+                url=item.get("url") or "", description=description,
+                tags=[_clean(t) for t in (item.get("jobType") or [])][:4] + industries[:4],
+                posted_at=str(item.get("pubDate") or ""))
+            (jobs if strict_match else loose).append(posting)
+            if len(jobs) >= query.limit_per_source:
+                break
+        return jobs[:query.limit_per_source] or loose[:query.limit_per_source]
+
+
+class WorkingNomadsSource(JobSource):
+    """Remote roles from Working Nomads - free public JSON API (no key)."""
+
+    name = "workingnomads"
+    label = "Working Nomads"
+    description = "Curated remote roles worldwide - free JSON API (no key)."
+    homepage = "https://www.workingnomads.com"
+
+    def fetch(self, query: SearchQuery, timeout: int = 15) -> list[JobPosting]:
+        payload = _request_json("https://www.workingnomads.com/api/exposed_jobs/", timeout)
+        terms = query.terms
+        jobs: list[JobPosting] = []
+        loose: list[JobPosting] = []
+        for item in payload if isinstance(payload, list) else []:
+            if not isinstance(item, dict) or not item.get("title"):
+                continue
+            title = _clean(item.get("title"))
+            description = _clean(item.get("description"))
+            tags = [_clean(t) for t in str(item.get("tags") or "").split(",") if _clean(t)]
+            haystack = f"{title} {description} {' '.join(tags)}".lower()
+            if terms:
+                if query_matches(haystack, terms):
+                    strict_match = True
+                elif query_matches(haystack, terms, require_all=False):
+                    strict_match = False
+                else:
+                    continue
+            else:
+                strict_match = True
+            location = _clean(item.get("location")) or "Anywhere in the world"
+            salary_min, salary_max, currency = parse_salary(description[:600])
+            posting = JobPosting(
+                source=self.name, title=title, company=_clean(item.get("company_name")),
+                location=location if looks_remote(location) else f"Remote ({location})",
+                remote=True, salary_min=salary_min, salary_max=salary_max, currency=currency,
+                url=item.get("url") or "", description=description,
+                tags=([_clean(item.get("category_name"))] if item.get("category_name") else []) + tags[:7],
+                posted_at=str(item.get("pub_date") or ""))
+            (jobs if strict_match else loose).append(posting)
+            if len(jobs) >= query.limit_per_source:
+                break
+        return jobs[:query.limit_per_source] or loose[:query.limit_per_source]
+
+
 class SampleSource(JobSource):
     """Offline demo data - keeps the whole pipeline usable without a network."""
-
     name = "sample"
     label = "Demo data"
     description = "Locally generated postings so the app works offline."
@@ -979,9 +1136,12 @@ def default_task_sources() -> list[JobSource]:
 
 
 def default_sources() -> list[JobSource]:
-    from .regional_job_sources import regional_sources, JoobleUaeSource
+    from .company_boards import CompanyBoardsSource
+    from .regional_job_sources import JoobleUaeSource, jooble_gulf_sources, regional_sources
     return [RemotiveSource(), ArbeitnowSource(), RemoteOkSource(), HimalayasSource(),
-            ArtificialAeSource(), *regional_sources(), JoobleUaeSource(), AdzunaSource(), SampleSource()]
+            JobicySource(), WorkingNomadsSource(), ArtificialAeSource(), CompanyBoardsSource(),
+            *regional_sources(), JoobleUaeSource(), *jooble_gulf_sources(),
+            AdzunaSource(), SampleSource()]
 
 
 # --------------------------------------------------------------------------- #
@@ -1070,8 +1230,11 @@ class JobScraper:
         return chosen
 
     def _fetch_source(self, source: JobSource, query: SearchQuery) -> list[JobPosting]:
-        if source.needs_credentials and self.settings is not None:
-            return source.fetch_with(query, self.settings, self._timeout())
+        # ``fetch_with`` is how a source reaches into Settings (API keys, the list of
+        # company career boards). Credential sources must have it; others may.
+        fetch_with = getattr(source, "fetch_with", None)
+        if fetch_with is not None and self.settings is not None:
+            return fetch_with(query, self.settings, self._timeout())
         return source.fetch(query, timeout=self._timeout())
 
     def _timeout(self) -> int:
@@ -1111,10 +1274,19 @@ class JobScraper:
 
         terms = query.terms
         excluded = [k.lower() for k in (query.exclude_keywords or [])]
+        max_age = max(0, int(query.max_post_age_days or 0))
         kept: list[JobPosting] = []
         strict_hits = 0
         dropped = 0
         for job in unique:
+            if max_age:
+                age = job.age_days
+                # A freshness cap is a promise: without a readable posting date the
+                # age cannot be confirmed, so the posting is hidden rather than
+                # guessed to be fresh.
+                if age is None or age > max_age:
+                    dropped += 1
+                    continue
             haystack = job.searchable_text().lower()
             if terms:
                 strict = query_matches(haystack, terms)
@@ -1153,15 +1325,20 @@ class JobScraper:
 __all__ = [
     "AdzunaSource",
     "ArbeitnowSource",
+    "ArtificialAeSource",
     "FetchResult",
+    "HimalayasSource",
     "JobScraper",
     "JobSource",
+    "JobicySource",
     "RemoteOkSource",
     "RemotiveSource",
     "SampleSource",
     "SearchOutcome",
     "SearchQuery",
+    "WorkingNomadsSource",
     "default_sources",
+    "jobicy_geo",
     "linkedin_search_url",
     "looks_remote",
     "parse_salary",

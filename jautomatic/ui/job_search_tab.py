@@ -84,6 +84,9 @@ class JobSearchTab(QWidget):
         row_one.addWidget(self.search_button)
         query_card.add_layout(row_one)
         coverage = QHBoxLayout()
+        coverage.addWidget(th.button("Gulf logistics", "default",
+                                     "UAE + Saudi Arabia, Qatar, Kuwait, Oman, Bahrain feeds",
+                                     self.use_gulf_search))
         coverage.addWidget(th.button("Africa + UAE logistics", "default",
                                      "Enable regional feeds and search local logistics roles",
                                      self.use_regional_search))
@@ -135,6 +138,16 @@ class JobSearchTab(QWidget):
         limits = QHBoxLayout()
         limits.addWidget(self.per_source)
         limits.addWidget(self.min_salary)
+        self.max_age = QSpinBox()
+        self.max_age.setRange(0, 90)
+        self.max_age.setPrefix("posted within ")
+        self.max_age.setSuffix(" days (0 = any age)")
+        self.max_age.setToolTip(
+            "Only show postings published in the last N days; 0 turns the limit off. "
+            "Postings whose date the board does not disclose are hidden too, because "
+            "their age cannot be confirmed. Auto-refresh and autopilot use the same limit.")
+        self.max_age.valueChanged.connect(self._on_max_age_changed)
+        limits.addWidget(self.max_age)
         limits.addStretch(1)
         options.addLayout(limits)
         sources_grid = QGridLayout()
@@ -180,13 +193,17 @@ class JobSearchTab(QWidget):
         browser_row = QHBoxLayout()
         browser_row.addWidget(th.label("More websites", "muted"))
         self.browser_board = QComboBox()
-        self.browser_board.addItems(["LinkedIn Africa", "LinkedIn UAE", "Bayt UAE", "GulfTalent UAE",
-                                     "BrighterMonday Kenya", "BrighterMonday Uganda", "Jobberman Nigeria"])
+        self.browser_board.addItems(browser_boards())
+        self.browser_region = QComboBox()
+        self.browser_region.addItems(browser_regions(self.browser_board.currentText()))
+        self.browser_board.currentTextChanged.connect(self._on_browser_board_changed)
         browser_row.addWidget(self.browser_board)
+        browser_row.addWidget(self.browser_region)
         browser_row.addWidget(th.button("Open website", "default", "Search in your own browser",
                                         self.open_regional_website))
-        browser_row.addWidget(th.label("Browser results are imported using the tools below.",
-                                       "small", wrap=True), 1)
+        self.browser_hint = th.label(browser_hint(self.browser_board.currentText()),
+                                     "small", wrap=True)
+        browser_row.addWidget(self.browser_hint, 1)
         query_card.add_layout(browser_row)
 
         url_row_sep = th.hline()
@@ -392,12 +409,21 @@ class JobSearchTab(QWidget):
         self.ctx.settings.auto_track_qualified = checked
         self.ctx.save_settings(self.ctx.settings)
 
+    def _on_max_age_changed(self, value: int) -> None:
+        self.ctx.settings.max_post_age_days = value
+        self.ctx.save_settings(self.ctx.settings)
+
     def _filter_note(self) -> str:
+        note = ""
+        days = self.max_age.value()
+        if days > 0 and self.outcome is not None and self.outcome.filtered_out:
+            note = (f" {self.outcome.filtered_out} posting(s) outside your filters "
+                    f"(older than {days} day(s), excluded words, location) were hidden.")
         threshold = self.min_match.value()
         if threshold <= 0 or not self.ranked:
-            return ""
+            return note
         qualified = sum(1 for _, match in self.ranked if match.score >= threshold)
-        return f" {qualified} of {len(self.ranked)} results meet the {threshold}% match target."
+        return f"{note} {qualified} of {len(self.ranked)} results meet the {threshold}% match target."
 
     def _hidden_search_ids(self) -> set[str]:
         from ..models import ApplicationStatus
@@ -458,7 +484,8 @@ class JobSearchTab(QWidget):
         query = self.ctx.pipeline.build_query(
             query_text, self.location.text().strip(), sources=sources,
             remote_only=self.remote_only.isChecked(), min_salary=self.min_salary.value(),
-            limit_per_source=self.per_source.value())
+            limit_per_source=self.per_source.value(),
+            max_post_age_days=self.max_age.value())
         # Snapshot UI values before crossing into the worker thread.
         profile = self.ctx.profile
         threshold = self.min_match.value()
@@ -499,9 +526,10 @@ class JobSearchTab(QWidget):
                     message += (f" None reached the {threshold}% qualification bar. "
                                 "You can review the lower matches here in Job Search.")
             if not outcome.jobs:
-                message += (" Try Africa + UAE logistics, a wider location or another role title. "
-                            "UAE in-app aggregation needs a UAE Jooble key in Settings; "
-                            "LinkedIn, Bayt and GulfTalent are available under More websites.")
+                message += (" Try Gulf logistics, Africa + UAE logistics, a wider location or "
+                            "another role title. Gulf in-app aggregation needs Jooble country "
+                            "keys in Settings; Bayt, GulfTalent, NaukriGulf and more are under "
+                            "More websites.")
             skipped = _skipped_sources()
             if skipped:
                 message += f" Skipped: {', '.join(skipped)} — add API keys in Settings to search them."
@@ -617,23 +645,50 @@ class JobSearchTab(QWidget):
         from ..models import DEFAULT_SOURCE_NAMES
         self.query.setText("logistics")
         self.location.setText("Africa; UAE")
+        self._apply_preset(DEFAULT_SOURCE_NAMES, "Africa + UAE logistics sources selected. "
+                           "Click Search jobs. More websites now covers the whole Gulf.")
+
+    def use_gulf_search(self) -> None:
+        from ..models import GULF_PRESET_SOURCE_NAMES
+        self.query.setText("logistics")
+        self.location.setText("Gulf; UAE")
+        self._apply_preset(GULF_PRESET_SOURCE_NAMES,
+                           "Gulf logistics sources selected — UAE, Saudi Arabia, Qatar, Kuwait, "
+                           "Oman and Bahrain. Add Jooble country keys in Settings for full "
+                           "in-app Gulf coverage.")
+
+    def _apply_preset(self, source_names: list[str], message: str) -> None:
         self.remote_only.setChecked(False)
         self.eligible_only.setChecked(False)
         for name, box in self.source_boxes.items():
-            box.setChecked(name in DEFAULT_SOURCE_NAMES)
-        self.ctx.settings.enabled_sources = list(DEFAULT_SOURCE_NAMES)
-        self.ctx.settings.last_search_query = "logistics"
-        self.ctx.settings.last_search_location = "Africa; UAE"
+            box.setChecked(name in source_names)
+        self.ctx.settings.enabled_sources = [name for name in source_names
+                                             if name in self.source_boxes]
+        self.ctx.settings.last_search_query = self.query.text().strip()
+        self.ctx.settings.last_search_location = self.location.text().strip()
         self.ctx.settings.remote_only = False
         self.ctx.save_settings(self.ctx.settings)
-        self.ctx.notify("Regional logistics sources selected. Click Search jobs. "
-                        "Jooble UAE needs its own API key; More websites opens additional boards.", "info")
+        self.ctx.notify(message, "info")
+
+    def _on_browser_board_changed(self, board: str) -> None:
+        """The region dropdown follows the board: Bayt lists Gulf states, Jobberman Africa."""
+        regions = browser_regions(board)
+        self.browser_region.blockSignals(True)
+        self.browser_region.clear()
+        self.browser_region.addItems(regions)
+        self.browser_region.blockSignals(False)
+        self.browser_hint.setText(browser_hint(board))
 
     def open_regional_website(self) -> None:
         from ..services.regional_job_sources import regional_search_url
-        url = regional_search_url(self.browser_board.currentText(), self.query.text(),
-                                  self.ctx.settings.linkedin_easy_apply, self.remote_only.isChecked())
-        th.open_in_browser(url)
+        board = self.browser_board.currentText()
+        region = self.browser_region.currentText()
+        url = regional_search_url(board, self.query.text(),
+                                  self.ctx.settings.linkedin_easy_apply,
+                                  self.remote_only.isChecked(), region)
+        if th.open_in_browser(url):
+            self.ctx.notify(f"Opened {board} ({region}) in your browser — track a job by pasting "
+                            "its URL or details below.", "info")
 
     def import_job_details(self) -> None:
         from .manual_job_dialog import ManualJobDialog

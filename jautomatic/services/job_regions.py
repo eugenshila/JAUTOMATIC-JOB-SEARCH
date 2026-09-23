@@ -37,7 +37,23 @@ CITY_COUNTRIES = {
     "mogadishu": "SO", "lilongwe": "MW", "port louis": "MU",
     "dubai": "AE", "abu dhabi": "AE", "sharjah": "AE", "ajman": "AE",
     "fujairah": "AE", "ras al khaimah": "AE", "umm al quwain": "AE", "al ain": "AE",
+    "riyadh": "SA", "jeddah": "SA", "dammam": "SA", "al khobar": "SA",
+    "khobar": "SA", "jubail": "SA", "makkah": "SA", "mecca": "SA", "madinah": "SA",
+    "medina": "SA", "neom": "SA",
+    "doha": "QA", "al wakrah": "QA", "lusail": "QA",
+    "kuwait city": "KW", "ahmadi": "KW", "hawalli": "KW",
+    "muscat": "OM", "sohar": "OM", "salalah": "OM", "duqm": "OM", "nizwa": "OM",
+    "manama": "BH", "muharraq": "BH", "riffa": "BH",
 }
+
+#: The six Gulf Cooperation Council states, as used by the Gulf search preset,
+#: the Gulf job boards and the Jooble key list.
+GULF_CODES = frozenset(("AE", "SA", "QA", "KW", "OM", "BH"))
+
+#: Every region word a job's location may contain and a search may ask for.
+#: ``location_matches`` expands these into country codes on both sides.
+REGION_WORDS = ("africa", "emea", "europe", "eu", "north america", "asia", "latam",
+                "gulf", "gcc", "middle east", "mena")
 
 
 def normalise(text: str) -> str:
@@ -62,9 +78,18 @@ def country_codes(text: str) -> set[str]:
 def region_codes(text: str) -> set[str]:
     from .eligibility import REGIONS
     regions = {**REGIONS, "africa": set(AFRICAN_COUNTRIES)}
-    regions["emea"] = regions["europe"] | set(AFRICAN_COUNTRIES) | {"AE"}
+    regions["emea"] = regions["europe"] | set(AFRICAN_COUNTRIES) | set(GULF_CODES)
     # "South Africa" is a country, not a request for every African country.
     return set(regions.get(normalise(text).strip(), set()))
+
+
+def gulf_codes(text: str) -> set[str]:
+    """Gulf (GCC) country codes named by a location: "Gulf", "Dubai", "GCC; UAE"…"""
+    codes: set[str] = set()
+    for part in re.split(r"[;,|]|\s+(?:and|or|&)\s+", text or "", flags=re.I):
+        if part.strip():
+            codes |= GULF_CODES & (country_codes(part) | region_codes(part))
+    return codes
 
 
 def location_matches(wanted: str, actual: str, remote: bool = False) -> bool:
@@ -74,7 +99,7 @@ def location_matches(wanted: str, actual: str, remote: bool = False) -> bool:
         return True
     targets = [p.strip() for p in re.split(r"[;,|]|\s+(?:and|or|&)\s+", wanted, flags=re.I) if p.strip()]
     actual_codes = country_codes(actual)
-    for region in ("africa", "emea", "europe", "eu", "north america", "asia", "latam"):
+    for region in REGION_WORDS:
         if contains(actual, region) and not (region == "africa" and contains(actual, "south africa")):
             actual_codes.update(region_codes(region))
     for target in targets:

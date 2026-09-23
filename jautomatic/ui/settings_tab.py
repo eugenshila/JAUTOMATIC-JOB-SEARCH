@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QPlainTextEdit,
     QScrollArea,
     QSpinBox,
     QVBoxLayout,
@@ -18,6 +19,8 @@ from PySide6.QtWidgets import (
 
 from .. import APP_TITLE, __version__
 from ..models import AppSettings
+from ..services.company_boards import (DEFAULT_COMPANY_BOARDS, board_display,
+                                       normalise_boards)
 from ..services.cv_generator import template_label
 from . import theme as th
 
@@ -97,14 +100,52 @@ class SettingsTab(QWidget):
         sources.add_layout(jooble_form)
         sources.add(th.button("Get a UAE Jooble API key", "ghost", "Open the official key request page",
                               lambda: th.open_in_browser("https://ae.jooble.org/api/about")))
-        sources.add(th.label("MyJobMag and JobWeb African feeds need no key. Jooble UAE "
-                             "requires a UAE-specific key (a US key will not work). "
-                             "Jooble currently limits free keys to 500 lifetime requests; "
-                             "automatic refresh also uses this quota.", "small", wrap=True))
-        sources.add(th.label("Adzuna is optional — Remotive, Arbeitnow, RemoteOK, Himalayas "
-                             "and UAE AI jobs need no key. Register free at "
-                             "developer.adzuna.com.", "small", wrap=True))
+        jooble_gulf = QHBoxLayout()
+        jooble_gulf.setSpacing(8)
+        self.jooble_gulf_keys: dict[str, QLineEdit] = {}
+        for code, country in (("sa", "Saudi"), ("qa", "Qatar"), ("kw", "Kuwait"), ("bh", "Bahrain")):
+            key_field = QLineEdit()
+            key_field.setEchoMode(QLineEdit.Password)
+            key_field.setPlaceholderText(f"{code}.jooble.org key")
+            key_field.textChanged.connect(self._mark_dirty)
+            self.jooble_gulf_keys[code] = key_field
+            jooble_gulf.addWidget(th.label(f"{country}", "muted"))
+            jooble_gulf.addWidget(key_field, 1)
+        sources.add_layout(jooble_gulf)
+        sources.add(th.label("Jooble runs one website per country and each needs its own free "
+                             "API key; keys are limited to 500 lifetime requests, which automatic "
+                             "refresh also uses. More websites opens Gulf boards without a key.",
+                             "small", wrap=True))
+        sources.add(th.label("MyJobMag and JobWeb African feeds, Jobicy, Working Nomads, "
+                             "Himalayas, UAE AI jobs and the company career boards need no key. "
+                             "Adzuna is optional — register free at developer.adzuna.com.",
+                             "small", wrap=True))
         left.addWidget(sources)
+
+        # company career boards ------------------------------------------- #
+        boards = th.Card("Company career boards",
+                         "Live openings polled straight from employers' own job pages "
+                         "(Greenhouse, Lever, Ashby) — no API key")
+        self.boards_edit = QPlainTextEdit()
+        self.boards_edit.setFixedHeight(96)
+        self.boards_edit.setPlaceholderText(
+            "One company per line, e.g.\n  greenhouse:careem\n  jobs.lever.co/kitopi\n  flexport")
+        self.boards_edit.textChanged.connect(self._mark_dirty)
+        boards.add(self.boards_edit)
+        boards_buttons = QHBoxLayout()
+        boards_buttons.addWidget(th.button(
+            "Reset to built-in list", "ghost",
+            "Restore the seeded Gulf and logistics boards: " +
+            ", ".join(board_display(b) for b in DEFAULT_COMPANY_BOARDS),
+            lambda: self.boards_edit.setPlainText("\n".join(DEFAULT_COMPANY_BOARDS))))
+        boards_buttons.addStretch(1)
+        boards.add_layout(boards_buttons)
+        boards.add(th.label("Paste a careers-page URL or write provider:slug. Boards that no "
+                            "longer exist are skipped so the rest of the search keeps working; "
+                            "if none respond the results line says so. "
+                            "Find boards on each company's jobs page.", "small", wrap=True))
+        self.boards_card = boards
+        left.addWidget(boards)
 
         # linkedin (hand-off) -------------------------------------------- #
         linkedin = th.Card("LinkedIn (browser hand-off)",
@@ -387,7 +428,13 @@ class SettingsTab(QWidget):
         self.adzuna_id.setText(settings.adzuna_app_id)
         self.adzuna_key.setText(settings.adzuna_app_key)
         self.adzuna_country.setCurrentText(settings.adzuna_country)
-        self.jooble_uae_key.setText(settings.jooble_uae_key)
+        keys = dict(getattr(settings, "jooble_keys", {}) or {})
+        self.jooble_uae_key.setText(keys.pop("ae", ""))
+        for code, field in self.jooble_gulf_keys.items():
+            field.setText(keys.get(code, ""))
+        self.boards_edit.blockSignals(True)
+        self.boards_edit.setPlainText("\n".join(getattr(settings, "company_boards", []) or []))
+        self.boards_edit.blockSignals(False)
         self.results_per_source.setValue(settings.results_per_source)
         self.timeout.setValue(settings.request_timeout)
         self.min_salary.setValue(settings.min_salary)
@@ -433,7 +480,13 @@ class SettingsTab(QWidget):
         settings.adzuna_app_id = self.adzuna_id.text().strip()
         settings.adzuna_app_key = self.adzuna_key.text().strip()
         settings.adzuna_country = self.adzuna_country.currentText().strip() or "gb"
-        settings.jooble_uae_key = self.jooble_uae_key.text().strip()
+        keys = {"ae": self.jooble_uae_key.text().strip()}
+        for code, field in self.jooble_gulf_keys.items():
+            keys[code] = field.text().strip()
+        settings.jooble_keys = {code: value for code, value in keys.items() if value}
+        settings.jooble_uae_key = ""
+        settings.company_boards = normalise_boards(
+            line.strip() for line in self.boards_edit.toPlainText().splitlines())
         settings.results_per_source = self.results_per_source.value()
         settings.request_timeout = self.timeout.value()
         settings.min_salary = self.min_salary.value()

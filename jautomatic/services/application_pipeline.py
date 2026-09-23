@@ -319,6 +319,7 @@ class ApplicationPipeline:
             limit_per_source=overrides.get("limit_per_source", settings.results_per_source),
             sources=sources,
             exclude_keywords=settings.excluded_keyword_list,
+            max_post_age_days=overrides.get("max_post_age_days", settings.max_post_age_days),
             include_sample=overrides.get("include_sample", False))
         return query
 
