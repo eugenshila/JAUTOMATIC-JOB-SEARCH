@@ -119,11 +119,10 @@ class GuiBootTest(unittest.TestCase):
                 window.save_settings(window.settings)
                 low = run(window, "python")
                 self.assertGreater(len(low.ranked), 0)
-                apps = window.workspace.applications()
-                self.assertGreater(len(apps), 0)
-                self.assertTrue(all(a.status_enum.value == "proposed" for a in apps))
-                self.assertIn("below the bar added for review", low.result_summary.text())
+                # Search never queues on its own any more — selection is explicit.
+                self.assertEqual(window.workspace.applications(), [])
                 self.assertIn("qualification bar", low.result_summary.text())
+                self.assertIn("review the lower matches", low.result_summary.text())
             finally:
                 window.close()
                 self.app.processEvents()
@@ -137,7 +136,7 @@ class GuiBootTest(unittest.TestCase):
                 nothing = run(window, "supply chain")
                 self.assertEqual(nothing.ranked, [])
                 self.assertIn("Africa + UAE logistics", nothing.result_summary.text())
-                self.assertIn("Jooble key", nothing.result_summary.text())
+                self.assertIn("Jooble country keys", nothing.result_summary.text())
             finally:
                 window.close()
                 self.app.processEvents()
@@ -201,6 +200,11 @@ class GuiBootTest(unittest.TestCase):
                     time.sleep(0.05)
                 self.assertFalse(window._busy)
                 self.assertGreater(len(tab.ranked), 0)
+                # Search no longer queues automatically; moving the ticked result does.
+                self.assertEqual(window.workspace.applications(), [])
+                from PySide6.QtCore import Qt
+                tab.table.item(0, 0).setCheckState(Qt.Checked)
+                tab._move_checked_to_queue()
                 self.assertGreater(len(window.workspace.applications()), 0)
             finally:
                 window.close()

@@ -92,7 +92,8 @@ def open_message(draft: EmailDraft, attachments: list[Path], message_path: Path)
         result = subprocess.run(
             [str(powershell), "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", encoded],
             input=base64.b64encode(json.dumps(payload).encode("utf-8")),
-            capture_output=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+            capture_output=True, timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("Outlook took too long. Check Outlook for an open draft before trying again.") from exc
     if result.returncode:
