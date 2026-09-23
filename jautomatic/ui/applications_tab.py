@@ -480,18 +480,15 @@ class ApplicationsTab(QWidget):
         row = self._current()
         if row is None or not self.outlook_button.isEnabled():
             return
-        from ..services.outlook_draft import open_message
         self.outlook_button.setEnabled(False)
 
         def work():
-            draft, attachments, path = self.ctx.pipeline.prepare_outlook_draft(
-                row.application, self.ctx.profile)
-            return open_message(draft, attachments, path)
+            return self.ctx.pipeline.open_outlook_draft(row.application, self.ctx.profile)
 
         def done(mode):
             self.outlook_button.setEnabled(True)
             self.refresh()
-            self.ctx.tabs["dashboard"].refresh()
+            self.ctx.refresh_all()
             message = "Outlook draft opened with CV and cover letter. Enter the recipient and send when ready."
             if mode == "new":
                 message = ("Opened the prepared email in New Outlook with CV and cover letter. "
@@ -499,7 +496,7 @@ class ApplicationsTab(QWidget):
             if mode == "eml":
                 message = ("Email file opened with CV and cover letter. Choose Outlook if Windows asks. "
                            "If it opens read-only, use Forward to edit it. Enter the recipient and send when ready.")
-            self.ctx.notify(message + " Then mark the application Sent here.", "success")
+            self.ctx.notify(message + " Moved to Sent automatically; delivery is not verified.", "success")
 
         def failed(message):
             self.outlook_button.setEnabled(True)

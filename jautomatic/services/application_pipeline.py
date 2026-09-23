@@ -303,13 +303,21 @@ class ApplicationPipeline:
     # -- search ------------------------------------------------------------ #
     def build_query(self, text: str, location: str = "", **overrides) -> SearchQuery:
         settings = self.settings
+        from .job_regions import country_codes
+        if location.strip() and "AE" not in country_codes(location):
+            location += "; UAE"
+        sources = list(overrides.get("sources", settings.enabled_sources))
+        if "uae_ai" not in sources:
+            sources.append("uae_ai")
+        if settings.jooble_uae_key and "jooble_uae" not in sources:
+            sources.append("jooble_uae")
         query = SearchQuery(
             text=text, location=location,
             remote_only=overrides.get("remote_only", settings.remote_only),
             min_salary=overrides.get("min_salary", settings.min_salary),
             salary_currency=self.workspace.load_profile().currency,
             limit_per_source=overrides.get("limit_per_source", settings.results_per_source),
-            sources=overrides.get("sources", settings.enabled_sources),
+            sources=sources,
             exclude_keywords=settings.excluded_keyword_list,
             include_sample=overrides.get("include_sample", False))
         return query
@@ -575,6 +583,19 @@ class ApplicationPipeline:
             self.workspace.save_application(record)
         materials.application = self.workspace.save_application(record)
         return materials
+
+    def open_outlook_draft(self, application: Application, profile: Profile | None = None):
+        from .outlook_draft import open_message
+        draft, attachments, path = self.prepare_outlook_draft(application, profile)
+        mode = open_message(draft, attachments, path)
+        record = self._record(application.application_id)
+        record.log("outlook opened", "Marked Sent on opening, per user preference; delivery not verified")
+        if record.status_enum in (ApplicationStatus.DISCOVERED, ApplicationStatus.PROPOSED,
+                                  ApplicationStatus.SHORTLISTED, ApplicationStatus.MATERIALS_READY):
+            self.set_status(record, ApplicationStatus.SENT, "Outlook opened (delivery not verified)")
+        else:
+            self.workspace.save_application(record)
+        return mode
 
     def prepare_outlook_draft(self, application: Application, profile: Profile | None = None):
         """Reuse the CV; refresh the letter when exact approved wording is set."""

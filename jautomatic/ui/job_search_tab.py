@@ -28,7 +28,7 @@ from ..models import JobPosting
 from ..services.application_pipeline import MatchResult, match_job
 from . import theme as th
 
-COLUMNS = ["Match", "Role", "Company", "Location", "Salary", "Posted", "Source", "Eligibility"]
+COLUMNS = ["Select / Match", "Role", "Company", "Location", "Salary", "Posted", "Source", "Eligibility"]
 
 
 class JobSearchTab(QWidget):
@@ -118,7 +118,11 @@ class JobSearchTab(QWidget):
         self.eligible_only.setToolTip("Show only jobs meeting your profile-match threshold.")
         self.eligible_only.toggled.connect(lambda _: self._fill_table())
         row_two.addWidget(self.eligible_only)
-        row_two.addWidget(self.auto_track)
+        self.show_cleared = QCheckBox("Show cleared jobs")
+        self.show_cleared.setToolTip("Show cleared and archived search results without changing their status")
+        self.show_cleared.toggled.connect(lambda _: self._fill_table())
+        row_two.addWidget(self.show_cleared)
+        self.auto_track.hide()
         row_two.addStretch(1)
         options_button = th.button("Search options", "ghost", "Sources, salary and import tools")
         options_button.setCheckable(True)
@@ -146,12 +150,10 @@ class JobSearchTab(QWidget):
         self.search_import_button = th.button("Search & import", "default",
                                               "Search and add the results to your tracker",
                                               lambda: self.start_search(True))
-        buttons.addWidget(self.search_import_button, 0, 0)
+        self.search_import_button.hide()
         buttons.addWidget(th.button("Import demo data", "ghost",
                                     "Add offline sample postings (no network needed)",
                                     self.import_demo), 0, 1)
-        buttons.addWidget(th.button("Import all results", "default",
-                                    "Add every current result to the tracker", self.import_all), 0, 2)
         buttons.addWidget(th.button("LinkedIn (browser)", "ghost",
                                     "Open your query on linkedin.com — no public API, so "
                                     "the app hands the search to your browser; Easy Apply "
@@ -228,7 +230,6 @@ class JobSearchTab(QWidget):
         self.table.verticalHeader().setMinimumSectionSize(46)
         self.table.setMinimumHeight(160)
         self.table.itemSelectionChanged.connect(self._show_selected)
-        self.table.doubleClicked.connect(self._prepare_selected)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(1, QHeaderView.Stretch)          # role widens first
         header.setMinimumSectionSize(65)
@@ -238,11 +239,15 @@ class JobSearchTab(QWidget):
         # Keep the primary comparison readable; full location/pay/date are in Details.
         for column in (3, 4, 5):
             self.table.setColumnHidden(column, True)
-        self.table.setColumnWidth(0, 72)
+        self.table.setColumnWidth(0, 130)
         self.table.setColumnWidth(2, 130)
         self.table.setColumnWidth(7, 110)
         table_card.add(self.table)
         table_actions = QHBoxLayout()
+        self.move_to_queue_button = th.button("Move to application queue", "primary",
+            "Add only the checked jobs; existing application statuses are preserved",
+            self._move_checked_to_queue)
+        table_actions.addWidget(self.move_to_queue_button)
         table_actions.addWidget(th.button("Prepare materials", "primary",
                                           "Generate CV + letter + e-mail for the selection",
                                           self._prepare_selected))
@@ -252,9 +257,13 @@ class JobSearchTab(QWidget):
         table_actions.addWidget(th.button("Shortlist", "default", "Mark as shortlisted",
                                           self._shortlist_selected))
         secondary_actions = QHBoxLayout()
+        secondary_actions.addWidget(th.button("Select all", "default",
+            "Tick every job currently shown, including already tracked jobs",
+            lambda: self._set_all_checked(True)))
+        secondary_actions.addWidget(th.button("Deselect all", "ghost",
+            "Untick every job currently shown", lambda: self._set_all_checked(False)))
         secondary_actions.addWidget(th.button("Clear", "default",
-                                          "Archive a posting you can't apply for "
-                                          "(kept in the database/history)",
+                                          "Remove ticked jobs, or the highlighted job, from search results. History is retained.",
                                           self._clear_selected))
         secondary_actions.addWidget(th.button("Open posting", "ghost", "", self._open_selected))
         secondary_actions.addStretch(1)
@@ -324,7 +333,7 @@ class JobSearchTab(QWidget):
         self.min_match.blockSignals(True)
         self.auto_track.blockSignals(True)
         self.min_match.setValue(settings.min_match_score)
-        self.auto_track.setChecked(settings.auto_track_qualified)
+        self.auto_track.setChecked(False)
         self.min_match.blockSignals(False)
         self.auto_track.blockSignals(False)
         self.threshold_badge.setText(f"{self.min_match.value()}% MATCH TARGET")
@@ -390,9 +399,18 @@ class JobSearchTab(QWidget):
         qualified = sum(1 for _, match in self.ranked if match.score >= threshold)
         return f" {qualified} of {len(self.ranked)} results meet the {threshold}% match target."
 
+    def _hidden_search_ids(self) -> set[str]:
+        from ..models import ApplicationStatus
+        hidden = set(self.ctx.settings.search_hidden_job_ids)
+        hidden.update(app.job_id for app in self.ctx.workspace.applications()
+                      if app.status_enum is ApplicationStatus.ARCHIVED)
+        return hidden
+
     def _visible_rows(self) -> list[tuple[int, JobPosting, MatchResult]]:
         threshold = self.min_match.value()
-        filtered = enumerate(self.ranked)
+        hidden = set() if self.show_cleared.isChecked() else self._hidden_search_ids()
+        filtered = ((index, pair) for index, pair in enumerate(self.ranked)
+                    if pair[0].job_id not in hidden)
         if self.eligible_only.isChecked() and threshold > 0:
             filtered = ((index, pair) for index, pair in filtered
                         if pair[1].score >= threshold)
@@ -444,7 +462,7 @@ class JobSearchTab(QWidget):
         # Snapshot UI values before crossing into the worker thread.
         profile = self.ctx.profile
         threshold = self.min_match.value()
-        track = import_results or self.auto_track.isChecked()
+        track = False  # Search never queues applications; selection is explicit.
 
         def work():
             cancel = self.ctx.cancel_event.is_set
@@ -652,16 +670,26 @@ class JobSearchTab(QWidget):
         rows = self._visible_rows()
         threshold = self.min_match.value()
         qualified = sum(match.score >= threshold for _, match in self.ranked)
+        hidden_ids = self._hidden_search_ids()
+        hidden_count = sum(job.job_id in hidden_ids for job, _ in self.ranked)
         self.result_counts.setText(
             f"{len(self.ranked)} FOUND   /   {qualified} ELIGIBLE   /   "
-            f"{len(self.ranked) - qualified} TO REVIEW   /   {len(rows)} SHOWN")
+            f"{len(self.ranked) - qualified} TO REVIEW   /   {len(rows)} SHOWN"
+            + (f"   /   {hidden_count} PREVIOUSLY CLEARED" if hidden_count else ""))
         self.empty_results.setVisible(not rows)
         self.empty_results.setText(
             "No jobs meet your match target yet. Turn off 'Eligible only' to review all results."
-            if self.ranked else "No postings to show yet. Search job boards or import demo data.")
+            if self.ranked and self.eligible_only.isChecked() else
+            "No postings to show. Cleared jobs remain in history; search again for new opportunities.")
+        if not rows and hidden_count and not self.show_cleared.isChecked():
+            self.empty_results.setText(
+                f"{hidden_count} result(s) were previously cleared or archived. "
+                "Tick 'Show cleared jobs' to view them without changing their status. "
+                + ("Turn off 'Eligible only' to also review lower matches." if self.eligible_only.isChecked() else ""))
         self.table.blockSignals(True)
         self.table.setRowCount(len(rows))
-        tracked = {app.job_id for app in self.ctx.workspace.applications()}
+        statuses = {app.job_id: app.status_enum.label for app in self.ctx.workspace.applications()}
+        tracked = set(statuses)
         for index, (rank_index, job, match) in enumerate(rows):
             is_tracked = job.job_id in tracked
             match_item = QTableWidgetItem(f"{match.score}%")
@@ -669,8 +697,10 @@ class JobSearchTab(QWidget):
             match_item.setForeground(QColor(th.ScoreBar.score_color(match.score)))
             match_item.setToolTip(" · ".join(match.reasons) or "no reasons recorded")
             match_item.setData(Qt.UserRole, rank_index)
+            match_item.setFlags(match_item.flags() | Qt.ItemIsUserCheckable)
+            match_item.setCheckState(Qt.Unchecked)
             self.table.setItem(index, 0, match_item)
-            title_item = QTableWidgetItem(f"✔  {job.title}" if is_tracked else job.title)
+            title_item = QTableWidgetItem(f"[{statuses[job.job_id]}] {job.title}" if is_tracked else job.title)
             if is_tracked:
                 title_item.setToolTip("Already in your tracker")
             self.table.setItem(index, 1, title_item)
@@ -768,6 +798,27 @@ class JobSearchTab(QWidget):
         self.description.setHtml(f"<p>{body.replace(chr(10), '<br>')}</p>")
 
     # ------------------------------------------------------------ actions #
+    def _set_all_checked(self, checked: bool) -> None:
+        state = Qt.Checked if checked else Qt.Unchecked
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None:
+                item.setCheckState(state)
+
+    def _move_checked_to_queue(self) -> None:
+        jobs = [self._job_for_row(row) for row in range(self.table.rowCount())
+                if self.table.item(row, 0).checkState() == Qt.Checked]
+        jobs = [job for job in jobs if job is not None]
+        if not jobs:
+            self.ctx.notify("Tick the jobs you want to move first.", "info")
+            return
+        created = self.ctx.pipeline.import_jobs(jobs)
+        self._fill_table()
+        for name in ("applications", "dashboard"):
+            self.ctx.tabs[name].refresh()
+        self.ctx.notify(f"Moved {len(created)} selected job(s) to the application queue. "
+                        "Already tracked jobs keep their current status.", "success")
+
     def _prepare_selected(self) -> None:
         selected = self._selected_job()
         if not selected:
@@ -826,17 +877,37 @@ class JobSearchTab(QWidget):
         self.ctx.notify(f"Shortlisted {job.title} at {job.company}.", "success")
 
     def _clear_selected(self) -> None:
-        selected = self._selected_job()
-        if not selected:
-            self.ctx.notify("Select a posting first.", "warning")
+        from ..models import ApplicationStatus
+        jobs = [self._job_for_row(row) for row in range(self.table.rowCount())
+                if self.table.item(row, 0).checkState() == Qt.Checked]
+        jobs = [job for job in jobs if job is not None]
+        if not jobs:
+            selected = self._selected_job()
+            if selected:
+                jobs = [selected[0]]
+        if not jobs:
+            self.ctx.notify("Tick or select a posting first.", "info")
             return
-        job, _match = selected
-        application = self.ctx.pipeline.ensure_application(job)
-        self.ctx.pipeline.clear_application(application)
-        self._mark_tracked()
-        self.ctx.notify(f"Cleared {job.title} at {job.company} from the queue.", "success")
-        self.ctx.tabs["dashboard"].refresh()
-        self.ctx.tabs["applications"].refresh()
+        hidden = set(self.ctx.settings.search_hidden_job_ids)
+        for job in jobs:
+            application = self.ctx.pipeline.ensure_application(job)
+            if not application.sent_at and application.status_enum in (
+                    ApplicationStatus.DISCOVERED, ApplicationStatus.PROPOSED,
+                    ApplicationStatus.SHORTLISTED, ApplicationStatus.MATERIALS_READY):
+                self.ctx.pipeline.clear_application(application, "cleared from job search")
+            hidden.add(job.job_id)
+        self.show_cleared.blockSignals(True)
+        self.show_cleared.setChecked(False)
+        self.show_cleared.blockSignals(False)
+        self.ctx.settings.search_hidden_job_ids = sorted(hidden)
+        self.ctx.save_settings(self.ctx.settings)
+        self._fill_table()
+        self.result_summary.setText(f"Cleared {len(jobs)} posting(s) from search results. History retained.")
+        self.ctx.notify(f"Cleared {len(jobs)} posting(s). Sent applications keep their status.", "success")
+        for name in ("dashboard", "applications", "archive", "sent"):
+            tab = self.ctx.tabs.get(name)
+            if tab is not None:
+                tab.refresh()
 
     def _open_selected(self) -> None:
         selected = self._selected_job()
