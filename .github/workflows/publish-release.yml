@@ -1,14 +1,12 @@
 # Publish a GitHub Release from an already-verified Windows MSI.
 #
+# Two triggers:
+#   * workflow_dispatch — attach a specific windows-installer run
+#   * workflow_run     — after a green windows-installer run on main, publish
+#                         v{jautomatic.__version__} unless that tag already exists
+#
 # The sandbox that authors this repo cannot download Actions artefacts (Azure
-# blob TLS is blocked), so the MSI is attached here, on a GitHub runner,
-# from a green windows-installer run. Dispatch after that run succeeds:
-#
-#   gh workflow run publish-release.yml -f run_id=<windows-installer run id>
-#
-# Empty run_id uses the latest successful windows-installer run on main.
-# Empty tag uses v{jautomatic.__version__}. The tag is created on the commit
-# that produced the MSI.
+# blob TLS is blocked), so the MSI is attached here, on a GitHub runner.
 name: publish-release
 
 on:
@@ -24,6 +22,10 @@ on:
         required: false
         type: string
         default: ""
+  workflow_run:
+    workflows: ["windows-installer"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
@@ -35,6 +37,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -51,14 +54,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RUN_ID="${{ inputs.run_id }}"
-          if [ -z "$RUN_ID" ]; then
-            RUN_ID=$(gh run list --repo "${{ github.repository }}" \
-              --workflow windows-installer.yml --branch main --status success \
-              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            RUN_ID="${{ inputs.run_id }}"
+            if [ -z "$RUN_ID" ]; then
+              RUN_ID=$(gh run list --repo "${{ github.repository }}" \
+                --workflow windows-installer.yml --branch main --status success \
+                --limit 1 --json databaseId --jq '.[0].databaseId')
+            fi
           fi
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful windows-installer run found on main." >&2
+            echo "No successful windows-installer run found." >&2
             exit 1
           fi
           META=$(gh run view "$RUN_ID" --repo "${{ github.repository }}" \
@@ -91,8 +98,12 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(python3 -c "from jautomatic import __version__; print(__version__)")
-          TAG="${{ inputs.tag }}"
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}"
           if [ -z "$TAG" ]; then TAG="v$VERSION"; fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
           MSI=$(python3 packaging/build_info.py MSI_FILENAME)
           if [ ! -f "dist/$MSI" ]; then
             echo "Expected dist/$MSI from the installer run; found:" >&2
