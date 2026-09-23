@@ -505,7 +505,8 @@ class DocsDisclosureTest(unittest.TestCase):
     def test_maintainer_guide_covers_pin_signing_and_followups(self):
         readme = (PACKAGING / "README.md").read_text(encoding="utf-8")
         for phrase in ("WIX_VERSION", "dotnet-tools.json", "Artifact Signing",
-                       "Follow-up 9", "Follow-up 10", "Follow-up 11"):
+                       "Follow-up 9", "Follow-up 10", "Follow-up 11",
+                       "publish-release.yml"):
             self.assertIn(phrase, readme)
 
     def test_install_guide_discloses_reputation_and_data(self):
@@ -524,6 +525,66 @@ class ReleasePreflightTest(unittest.TestCase):
         assert spec.loader is not None
         spec.loader.exec_module(module)
         self.assertEqual(module.main(), 0)
+
+
+class PublishReleaseWorkflowTest(unittest.TestCase):
+    WORKFLOW = ROOT / ".github" / "workflows" / "publish-release.yml"
+
+    def setUp(self):
+        self.text = self.WORKFLOW.read_text(encoding="utf-8")
+
+    def test_workflow_exists_and_is_manual(self):
+        self.assertTrue(self.WORKFLOW.is_file())
+        self.assertIn("workflow_dispatch", self.text)
+        self.assertIn("contents: write", self.text)
+        self.assertIn("actions: read", self.text)
+
+    def test_attaches_verified_msi_from_windows_installer_run(self):
+        self.assertIn("gh run download", self.text)
+        self.assertIn("JAUTOMATIC-Setup-x64", self.text)
+        self.assertIn("gh release create", self.text)
+        self.assertIn("tools/release_notes.py", self.text)
+        self.assertIn("MSI_FILENAME", self.text)
+        self.assertIn("--target", self.text)
+
+    def test_if_conditions_never_reference_the_secrets_context(self):
+        for index, line in enumerate(self.text.splitlines()):
+            stripped = line.lstrip()
+            if stripped.startswith("if:"):
+                self.assertNotIn("secrets.", stripped,
+                                 f"if: at publish-release.yml line {index + 1}")
+
+
+class ReleaseNotesTest(unittest.TestCase):
+    def test_changelog_section_and_checksum(self):
+        spec = importlib.util.spec_from_file_location(
+            "release_notes", ROOT / "tools" / "release_notes.py")
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        changelog = (
+            "## [9.9.9] - 2026-01-01\n\n- New thing.\n\n"
+            "## [1.0.0] - 2026-01-01\n\n- Old thing.\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            msi = Path(tmp) / "JAUTOMATIC-Setup-9.9.9-x64.msi"
+            msi.write_bytes(b"msi-bytes")
+            notes = module.compose(
+                "9.9.9", changelog=changelog, msi=msi,
+                run_url="https://example.test/run/1")
+        self.assertIn("JAUTOMATIC-Setup-9.9.9-x64.msi", notes)
+        self.assertIn("## [9.9.9]", notes)
+        self.assertIn("- New thing.", notes)
+        self.assertNotIn("Old thing", notes)
+        self.assertIn("windows-installer", notes)
+        digest = __import__("hashlib").sha256(b"msi-bytes").hexdigest()
+        self.assertIn(f"**SHA-256:** `{digest}`", notes)
+        with self.assertRaises(ValueError):
+            module.changelog_section(changelog, "0.0.0")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "notes.md"
+            self.assertEqual(module.main(["--version", "1.10.0", "--out", str(out)]), 0)
+            self.assertIn("## [1.10.0]", out.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
