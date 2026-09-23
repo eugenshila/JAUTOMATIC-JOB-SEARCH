@@ -53,7 +53,7 @@ class ApplicationTabsTest(WorkspaceTestCase):
         self.assertEqual(len(all_ids), len(ApplicationStatus))
         self.assertEqual(len(set(all_ids)), len(all_ids))
 
-    def test_outlook_button_runs_draft_work_and_never_marks_sent(self):
+    def test_outlook_button_runs_draft_work_and_marks_sent_on_open(self):
         record = self._create()
         self.ctx.refresh_all()
         tab = self.ctx.tabs["applications"]
@@ -68,10 +68,13 @@ class ApplicationTabsTest(WorkspaceTestCase):
             done(work())
         launch.assert_called_once_with("draft", [], "path")
         self.assertTrue(tab.outlook_button.isEnabled())
-        self.assertEqual(self.workspace.get_application(record.application_id).status, record.status)
+        # Opening the draft counts as applied (delivery not verified) — same
+        # rule as pipeline.open_outlook_draft in tests.test_queue_rules.
+        self.assertEqual(self.workspace.get_application(record.application_id).status, "sent")
         tab._open_outlook_draft()
         self.ctx.run_task.call_args.args[3]("Outlook unavailable")
         self.assertTrue(tab.outlook_button.isEnabled())
+        self.assertEqual(self.workspace.get_application(record.application_id).status, "sent")
         del self.ctx.tabs["dashboard"]
 
     def test_sent_regret_restore_and_confirmed_delete(self):

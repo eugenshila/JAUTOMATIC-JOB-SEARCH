@@ -6,6 +6,21 @@ this project follows [SemVer](https://semver.org/).
 
 ## [1.10.0] - 2026-09-23
 
+### Fixed
+
+- Fixed a crash on startup introduced with the Gulf expansion: the Job Search
+  tab referenced the "More websites" helper functions without importing them,
+  which broke every GUI boot (`browser_boards` NameError) — surfaced by the
+  Windows installer test suite and now covered by the full offscreen GUI run.
+- The "posted within N days" spinner on Job Search now restores the saved
+  freshness limit when the app starts (previously it silently reset to 0 =
+  any age).
+- Settings → company career boards and Jooble keys round-trip tests now press
+  the real "Save settings" button, and the Outlook draft button test matches
+  the shipped behaviour (opening the draft marks the application Sent).
+- Cross-platform: the classic-Outlook launcher no longer references the
+  Windows-only `CREATE_NO_WINDOW` flag unguarded, so the suite runs on Linux.
+
 ### Expanded job sites: Gulf focus
 
 - Added **Jobicy** and **Working Nomads** — key-free remote boards whose APIs

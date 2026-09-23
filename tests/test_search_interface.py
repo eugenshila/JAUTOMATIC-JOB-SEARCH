@@ -137,67 +137,6 @@ class SearchInterfaceTest(WorkspaceTestCase):
         self.assertIn("Bayt", self.ctx.notify.call_args[0][0])
 
 
-class SettingsInterfaceTest(WorkspaceTestCase):
-    """The Settings controls for the 1.5 sources round-trip through settings."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-        apply_theme(cls.app, "blackgreen")
-
-    def setUp(self):
-        super().setUp()
-        from unittest.mock import Mock
-
-        from jautomatic.ui.settings_tab import SettingsTab
-        settings = AppSettings()
-        self.ctx = SimpleNamespace(
-            settings=settings, profile=Profile(), workspace=self.workspace,
-            pipeline=ApplicationPipeline(self.workspace, settings),
-            add_header_action=Mock(), save_settings=self.workspace.save_settings,
-            notify=Mock(), confirm=Mock(return_value=True), update_meta=Mock(),
-            refresh_all=Mock(), open_preview=Mock(), run_task=Mock(), busy=False,
-        )
-        self.tab = SettingsTab(self.ctx)
-        self.addCleanup(self.tab.close)
-
-    def test_company_boards_and_jooble_keys_round_trip(self):
-        self.tab.boards_edit.setPlainText("greenhouse:careem\njobs.lever.co/kitopi\n\njunk here")
-        self.tab.jooble_uae_key.setText("dubai-key")
-        self.tab.jooble_gulf_keys["sa"].setText("riyadh-key")
-        self.tab.collect()
-        settings = self.workspace.load_settings()
-        # "junk here" is a bare slug -> an unusable Greenhouse board name, dropped.
-        self.assertEqual(settings.company_boards, ["greenhouse:careem", "lever:kitopi"])
-        self.assertEqual(settings.jooble_keys, {"ae": "dubai-key", "sa": "riyadh-key"})
-        self.assertEqual(settings.jooble_uae_key, "")          # the key lives in the map
-
-    def test_board_list_editor_shows_the_saved_list_and_defaults(self):
-        self.ctx.settings.company_boards = ["greenhouse:careem"]
-        self.ctx.settings.jooble_keys = {"qa": "doha-key"}
-        self.tab.load()
-        self.assertEqual(self.tab.boards_edit.toPlainText(), "greenhouse:careem")
-        self.assertEqual(self.tab.jooble_uae_key.text(), "")
-        self.assertEqual(self.tab.jooble_gulf_keys["qa"].text(), "doha-key")
-        self.tab.boards_edit.setPlainText("")                  # empty = the built-in list
-        self.tab.collect()
-        settings = self.workspace.load_settings()
-        self.assertEqual(settings.company_boards, [])
-
-    def test_reset_button_restores_the_builtin_boards(self):
-        from PySide6.QtWidgets import QPushButton
-
-        from jautomatic.services.company_boards import DEFAULT_COMPANY_BOARDS
-        self.tab.boards_edit.setPlainText("greenhouse:careem")
-        reset = next(button for button in self.tab.boards_card.findChildren(QPushButton)
-                     if button.text() == "Reset to built-in list")
-        reset.click()
-        self.assertEqual(self.tab.boards_edit.toPlainText(),
-                         "\n".join(DEFAULT_COMPANY_BOARDS))
-        self.tab.collect()
-        settings = self.workspace.load_settings()
-        self.assertEqual(len(settings.company_boards), len(DEFAULT_COMPANY_BOARDS))
-
     def test_move_only_checked_results(self):
         from PySide6.QtCore import Qt
         self.ctx.tabs = {'applications': Mock(), 'dashboard': Mock()}
@@ -281,3 +220,64 @@ class SettingsInterfaceTest(WorkspaceTestCase):
         self.tab.show_cleared.setChecked(False)
         self.assertEqual(self.tab.table.rowCount(),0)
 
+
+class SettingsInterfaceTest(WorkspaceTestCase):
+    """The Settings controls for the 1.5 sources round-trip through settings."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        apply_theme(cls.app, "blackgreen")
+
+    def setUp(self):
+        super().setUp()
+        from unittest.mock import Mock
+
+        from jautomatic.ui.settings_tab import SettingsTab
+        settings = AppSettings()
+        self.ctx = SimpleNamespace(
+            settings=settings, profile=Profile(), workspace=self.workspace,
+            pipeline=ApplicationPipeline(self.workspace, settings),
+            add_header_action=Mock(), save_settings=self.workspace.save_settings,
+            notify=Mock(), confirm=Mock(return_value=True), update_meta=Mock(),
+            refresh_all=Mock(), open_preview=Mock(), run_task=Mock(), busy=False,
+        )
+        self.tab = SettingsTab(self.ctx)
+        self.addCleanup(self.tab.close)
+
+    def test_company_boards_and_jooble_keys_round_trip(self):
+        self.tab.boards_edit.setPlainText("greenhouse:careem\njobs.lever.co/kitopi\n\njunk here")
+        self.tab.jooble_uae_key.setText("dubai-key")
+        self.tab.jooble_gulf_keys["sa"].setText("riyadh-key")
+        self.tab.save_button.click()
+        settings = self.workspace.load_settings()
+        # "junk here" is a bare slug -> an unusable Greenhouse board name, dropped.
+        self.assertEqual(settings.company_boards, ["greenhouse:careem", "lever:kitopi"])
+        self.assertEqual(settings.jooble_keys, {"ae": "dubai-key", "sa": "riyadh-key"})
+        self.assertEqual(settings.jooble_uae_key, "")          # the key lives in the map
+
+    def test_board_list_editor_shows_the_saved_list_and_defaults(self):
+        self.ctx.settings.company_boards = ["greenhouse:careem"]
+        self.ctx.settings.jooble_keys = {"qa": "doha-key"}
+        self.tab.load()
+        self.assertEqual(self.tab.boards_edit.toPlainText(), "greenhouse:careem")
+        self.assertEqual(self.tab.jooble_uae_key.text(), "")
+        self.assertEqual(self.tab.jooble_gulf_keys["qa"].text(), "doha-key")
+        self.tab.boards_edit.setPlainText("")                  # empty = the built-in list
+        self.tab.save_button.click()
+        settings = self.workspace.load_settings()
+        self.assertEqual(settings.company_boards, [])
+
+    def test_reset_button_restores_the_builtin_boards(self):
+        from PySide6.QtWidgets import QPushButton
+
+        from jautomatic.services.company_boards import DEFAULT_COMPANY_BOARDS
+        self.tab.boards_edit.setPlainText("greenhouse:careem")
+        reset = next(button for button in self.tab.boards_card.findChildren(QPushButton)
+                     if button.text() == "Reset to built-in list")
+        reset.click()
+        self.assertEqual(self.tab.boards_edit.toPlainText(),
+                         "\n".join(DEFAULT_COMPANY_BOARDS))
+        self.tab.save_button.click()
+        settings = self.workspace.load_settings()
+        self.assertEqual(len(settings.company_boards), len(DEFAULT_COMPANY_BOARDS))

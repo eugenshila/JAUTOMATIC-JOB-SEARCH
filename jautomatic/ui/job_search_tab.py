@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from ..models import JobPosting
 from ..services.application_pipeline import MatchResult, match_job
+from ..services.regional_job_sources import browser_boards, browser_hint, browser_regions
 from . import theme as th
 
 COLUMNS = ["Select / Match", "Role", "Company", "Location", "Salary", "Posted", "Source", "Eligibility"]
@@ -347,6 +348,9 @@ class JobSearchTab(QWidget):
         profile = self.ctx.profile
         self.per_source.setValue(settings.results_per_source)
         self.min_salary.setValue(settings.min_salary)
+        self.max_age.blockSignals(True)
+        self.max_age.setValue(max(0, min(90, int(settings.max_post_age_days or 0))))
+        self.max_age.blockSignals(False)
         self.min_match.blockSignals(True)
         self.auto_track.blockSignals(True)
         self.min_match.setValue(settings.min_match_score)
@@ -985,3 +989,4 @@ class JobSearchTab(QWidget):
 
 
 __all__ = ["COLUMNS", "JobSearchTab"]
+
