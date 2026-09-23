@@ -2,10 +2,11 @@
 from dataclasses import replace
 from html import escape
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QDialog,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QDialog,
     QDialogButtonBox, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
     QPlainTextEdit, QTableWidget, QTableWidgetItem, QHeaderView, QTextBrowser, QInputDialog)
 from ..services.paid_tasks import PaidTask, TaskStore, STAGES, CATEGORIES, UNITS, ELIGIBILITY, matches_filters
+from ..services.task_platforms import task_platform, task_platform_names, task_search_terms
 from ..services.task_recommendations import recommended_task_sources
 from . import theme as th
 
@@ -61,21 +62,46 @@ class TasksTab(QWidget):
         self.ctx = ctx
         self.store = TaskStore(ctx.workspace)
         self.checked = set()
+        self.platform_boxes = {}
         layout = QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
-        sources = th.Card('Find work on Clickworker', 'Sign in on the platform, then add individual task details here. No live account sync is connected.')
+        sources = th.Card('Find work on task websites', 'Search opens the checked websites in your browser with your words. Sign in there, then record real task details with Add task details. No live account sync is connected.')
+        search_row = QHBoxLayout()
+        self.query = QLineEdit(ctx.settings.task_search_query)
+        self.query.setPlaceholderText('Search words — e.g. data entry, web research, testing')
+        self.query.setToolTip('Filters the recorded tasks below as you type. The Search tasks button also opens the checked websites with these words.')
+        self.query.returnPressed.connect(self.search_websites)
+        search_row.addWidget(self.query, 1)
+        self.search_button = th.button('Search tasks', 'primary', 'Open every checked website in your browser with these search words', self.search_websites)
+        search_row.addWidget(self.search_button)
+        sources.add_layout(search_row)
+        sites = QGridLayout()
+        enabled = set(ctx.settings.task_platforms_enabled)
+        for index, name in enumerate(task_platform_names()):
+            platform = task_platform(name)
+            box = QCheckBox(platform.label)
+            box.setChecked(name in enabled)
+            box.setToolTip(platform.hint + ('\n' + platform.homepage if platform.homepage else ''))
+            box.toggled.connect(self.platforms_changed)
+            self.platform_boxes[name] = box
+            sites.addWidget(box, index // 4, index % 4)
+        sources.add_layout(sites)
+        self.web_status = th.label('Tick the websites to search. Each one opens in your browser; availability and eligibility stay on the platform.', 'small', wrap=True)
+        sources.add(self.web_status)
         actions = QHBoxLayout()
-        actions.addWidget(th.button('Open Clickworker', 'primary', '', lambda: th.open_in_browser('https://workplace.clickworker.com/')))
         actions.addWidget(th.button('Add task details', 'default', 'Add a real opportunity for review; it will not enter My tasks automatically', self.add_task))
         actions.addStretch(1); sources.add_layout(actions)
-        self.recommendations = th.label('', 'small', wrap=True); sources.add(self.recommendations); layout.addWidget(sources)
+        self.recommendations = QTextBrowser(); self.recommendations.setOpenExternalLinks(True)
+        self.recommendations.setMaximumHeight(52); self.recommendations.setFrameShape(QTextBrowser.NoFrame)
+        self.recommendations.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sources.add(self.recommendations)
+        layout.addWidget(sources)
         filters = QHBoxLayout()
         self.view = combo(('Available','My tasks','Archived','All records'))
-        self.query = QLineEdit(ctx.settings.task_search_query); self.query.setPlaceholderText('Search tasks')
         self.category = combo(('All types',*CATEGORIES))
         self.min_pay = QDoubleSpinBox(); self.min_pay.setRange(0,100000); self.min_pay.setPrefix('USD min '); self.min_pay.setValue(ctx.settings.min_pay_usd)
         self.unit = combo(UNITS)
         self.minutes = QSpinBox(); self.minutes.setRange(0,100000); self.minutes.setSpecialValueText('Any duration'); self.minutes.setSuffix(' min')
-        for widget in (self.view,self.query,self.category,self.min_pay,self.unit,self.minutes): filters.addWidget(widget)
+        for widget in (self.view,self.category,self.min_pay,self.unit,self.minutes): filters.addWidget(widget)
         layout.addLayout(filters)
         options = QHBoxLayout()
         self.unknown = QCheckBox('Include unknown pay / other currencies')
@@ -115,6 +141,27 @@ class TasksTab(QWidget):
         self.ctx.save_settings(self.ctx.settings)
         self.refresh()
 
+    def platforms_changed(self, *_):
+        self.ctx.settings.task_platforms_enabled = [name for name, box in self.platform_boxes.items() if box.isChecked()]
+        self.ctx.save_settings(self.ctx.settings)
+
+    def search_websites(self):
+        names = [name for name, box in self.platform_boxes.items() if box.isChecked()]
+        if not names:
+            self.ctx.notify('Tick at least one task website first.', 'info')
+            return
+        terms = task_search_terms(self.query.text(), self.category.currentText())
+        self.ctx.settings.task_search_query = self.query.text()
+        self.ctx.settings.task_platforms_enabled = names
+        self.ctx.save_settings(self.ctx.settings)
+        opened = [name for name in names if th.open_in_browser(task_platform(name).search_url(terms))]
+        if not opened:
+            self.web_status.setText('The browser could not be opened. Copy the website links from the tooltips and try again.')
+            self.ctx.notify('The browser could not be opened for the task websites.', 'warning')
+            return
+        self.web_status.setText(f"Opened {len(opened)} task website(s) for '{terms}' in your browser. Sign in, pick real offers, then use Add task details to record them here.")
+        self.ctx.notify(f"Opened {len(opened)} task website(s) in your browser for '{terms}'. Sign in there; availability and eligibility stay on the platform.", 'success')
+
     def clear_filters(self):
         for widget in (self.query,self.category,self.min_pay,self.unit,self.minutes,self.unknown): widget.blockSignals(True)
         self.query.clear(); self.category.setCurrentIndex(0); self.min_pay.setValue(2); self.unit.setCurrentText('task'); self.minutes.setValue(0); self.unknown.setChecked(False)
@@ -123,7 +170,11 @@ class TasksTab(QWidget):
 
     def refresh(self):
         recommendations = recommended_task_sources(self.ctx.profile)
-        self.recommendations.setText('Profile suggestions: ' + ('; '.join(item['title'] for item in recommendations) or 'Add your experience and skills in Profile.'))
+        if recommendations:
+            links = ' · '.join(f'<a href="{escape(item["url"])}">{escape(item["title"])}</a>' for item in recommendations)
+            self.recommendations.setHtml(f'<b>Profile suggestions:</b> {links}')
+        else:
+            self.recommendations.setHtml('<span>Profile suggestions: add your experience and skills in Profile.</span>')
         records = self.store.tasks()
         self.visible = [task for task in records if matches_filters(task, query=self.query.text(), category=self.category.currentText(),
             minimum=self.min_pay.value(), unit=self.unit.currentText(), minutes=self.minutes.value(), view=self.view.currentText(), include_unknown=self.unknown.isChecked())]
@@ -139,7 +190,7 @@ class TasksTab(QWidget):
                       (task.deadline + (' (expired)' if task.expired else '')) or 'Unknown', task.eligibility, task.status]
             for col,value in enumerate(values,1): self.table.setItem(row,col,QTableWidgetItem(value))
         self.table.blockSignals(False)
-        self.summary.setText(f'{len(self.visible)} shown / {len(records)} recorded. Manually added opportunities; confirm availability on the platform.' if records else 'No real tasks added yet. Open Clickworker, then use Add task details. Demo tasks are not shown or added to applications.')
+        self.summary.setText(f'{len(self.visible)} shown / {len(records)} recorded. Manually added opportunities; confirm availability on the platform.' if records else 'No real tasks added yet. Search the task websites above, then use Add task details. Demo tasks are not shown or added to applications.')
         totals=self.store.earnings()
         self.earnings.setText('Payments recorded: '+(' · '.join(f'{value:,.2f} {currency}' for currency,value in sorted(totals.items())) or 'None yet')+' — actual receipts only; currencies are kept separate.')
         self.details.clear()

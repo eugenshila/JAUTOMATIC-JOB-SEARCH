@@ -818,6 +818,10 @@ GULF_PRESET_SOURCE_NAMES = ["himalayas", "jobicy", "workingnomads", "company_boa
 SOURCE_NAMES_V2 = ["remotive", "arbeitnow", "remoteok", "himalayas", *REGIONAL_SOURCE_NAMES]
 SOURCE_NAMES_V1 = ["remotive", "arbeitnow", "remoteok"]
 SOURCE_CATALOG_VERSION = 3
+#: Paid-task websites the Tasks tab opens for search (browser hand-off only;
+#: the catalog itself lives in :mod:`jautomatic.services.task_platforms`).
+DEFAULT_TASK_PLATFORM_NAMES = ["clickworker", "mturk", "appen", "telus_ai", "oneforma",
+                               "utest", "microworkers", "prolific", "upwork"]
 
 
 @dataclass
@@ -851,6 +855,8 @@ class AppSettings:
     auto_track_qualified: bool = False      # search results at/above min_match_score go to the queue
     min_pay_usd: int = 2                    # Tasks search: only gigs advertising >= this per task (0 = off)
     task_search_query: str = ""            # independent of the main job search
+    #: Ticked websites on the Tasks tab (all of them until you change it).
+    task_platforms_enabled: list[str] = field(default_factory=lambda: list(DEFAULT_TASK_PLATFORM_NAMES))
     max_post_age_days: int = 5              # hide postings older than this (0 = any age)
     remote_only: bool = False
     exclude_keywords: str = ""            # comma separated, filters out postings
@@ -898,6 +904,9 @@ class AppSettings:
         selected = payload.get("enabled_sources", DEFAULT_SOURCE_NAMES)
         payload["enabled_sources"] = ([str(s) for s in selected] if isinstance(selected, list)
                                       else list(DEFAULT_SOURCE_NAMES))
+        picked = payload.get("task_platforms_enabled", DEFAULT_TASK_PLATFORM_NAMES)
+        payload["task_platforms_enabled"] = ([str(s) for s in picked] if isinstance(picked, list)
+                                             else list(DEFAULT_TASK_PLATFORM_NAMES))
         try:
             stored_catalog = int(data.get("source_catalog_version") or 0)
         except (TypeError, ValueError):

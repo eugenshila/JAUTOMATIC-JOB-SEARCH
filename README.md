@@ -32,6 +32,15 @@ exclude keywords. Results are de-duplicated across boards, ranked by match score
 with the reasons behind each score ("pay band clears your floor", "title matches your target
 role", …). One click generates the whole application pack.
 
+**Tasks** — real paid micro-work (data entry, research, categorisation, testing)
+from task websites such as Clickworker, Amazon MTurk, Appen, TELUS Digital AI,
+OneForma, uTest, Microworkers, Prolific and Upwork. **Search tasks** opens the
+ticked websites in your browser with your search words (these platforms need
+your own sign-in and publish no public feeds, so nothing is scraped); record
+real offers with **Add task details**, track them through Saved → Submitted →
+Approved, and keep actual payments in the earnings log — deliberately separate
+from job applications.
+
 **Applications** — prepare unsent jobs, review scores and documents, and keep notes.
 After applying, choose **Sent** and click **Apply** to move the record to **Sent**.
 

@@ -4,6 +4,23 @@ All notable changes to JAUTOMATIC JOB SEARCH are documented here.
 Format: a relaxed [Keep a Changelog](https://keepachangelog.com/) style —
 this project follows [SemVer](https://semver.org/).
 
+## [1.11.0] - 2026-09-23
+
+### Added
+
+- **Tasks tab search and websites**: the Tasks tab now has a real **Search
+  tasks** button and a website selection, mirroring the Job search tab. Nine
+  paid-task websites ship ticked by default — Clickworker, Amazon MTurk, Appen,
+  TELUS Digital AI, OneForma, uTest, Microworkers, Prolific and Upwork — and
+  the search opens the ticked ones in your browser with your search words
+  (query-aware links where the site supports them, e.g. Upwork, OneForma and
+  the Clickworker category pages). Ticked websites persist in Settings. These
+  platforms publish no public feeds and need your own account, so nothing is
+  scraped and no account is linked: sign in yourself and record real offers
+  with **Add task details**, exactly as before.
+- Profile task suggestions on the Tasks tab are now clickable links straight
+  to the matching Clickworker / uTest pages.
+
 ## [1.10.0] - 2026-09-23
 
 ### Fixed
