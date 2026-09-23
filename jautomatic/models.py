@@ -840,6 +840,7 @@ class AppSettings:
     min_match_score: int = 80               # qualification bar; results stay visible for review
     auto_track_qualified: bool = True       # search results at/above min_match_score go to the queue
     min_pay_usd: int = 10                   # Tasks search: only gigs advertising >= this per task (0 = off)
+    max_post_age_days: int = 5              # hide postings older than this (0 = any age)
     remote_only: bool = False
     exclude_keywords: str = ""            # comma separated, filters out postings
     theme: str = "blackgreen"

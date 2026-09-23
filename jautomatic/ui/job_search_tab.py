@@ -134,6 +134,16 @@ class JobSearchTab(QWidget):
         limits = QHBoxLayout()
         limits.addWidget(self.per_source)
         limits.addWidget(self.min_salary)
+        self.max_age = QSpinBox()
+        self.max_age.setRange(0, 90)
+        self.max_age.setPrefix("posted within ")
+        self.max_age.setSuffix(" days (0 = any age)")
+        self.max_age.setToolTip(
+            "Only show postings published in the last N days; 0 turns the limit off. "
+            "Postings whose date the board does not disclose are hidden too, because "
+            "their age cannot be confirmed. Auto-refresh and autopilot use the same limit.")
+        self.max_age.valueChanged.connect(self._on_max_age_changed)
+        limits.addWidget(self.max_age)
         limits.addStretch(1)
         options.addLayout(limits)
         sources_grid = QGridLayout()
@@ -390,12 +400,21 @@ class JobSearchTab(QWidget):
         self.ctx.settings.auto_track_qualified = checked
         self.ctx.save_settings(self.ctx.settings)
 
+    def _on_max_age_changed(self, value: int) -> None:
+        self.ctx.settings.max_post_age_days = value
+        self.ctx.save_settings(self.ctx.settings)
+
     def _filter_note(self) -> str:
+        note = ""
+        days = self.max_age.value()
+        if days > 0 and self.outcome is not None and self.outcome.filtered_out:
+            note = (f" {self.outcome.filtered_out} posting(s) outside your filters "
+                    f"(older than {days} day(s), excluded words, location) were hidden.")
         threshold = self.min_match.value()
         if threshold <= 0 or not self.ranked:
-            return ""
+            return note
         qualified = sum(1 for _, match in self.ranked if match.score >= threshold)
-        return f" {qualified} of {len(self.ranked)} results meet the {threshold}% match target."
+        return f"{note} {qualified} of {len(self.ranked)} results meet the {threshold}% match target."
 
     def _visible_rows(self) -> list[tuple[int, JobPosting, MatchResult]]:
         threshold = self.min_match.value()
@@ -447,7 +466,8 @@ class JobSearchTab(QWidget):
         query = self.ctx.pipeline.build_query(
             query_text, self.location.text().strip(), sources=sources,
             remote_only=self.remote_only.isChecked(), min_salary=self.min_salary.value(),
-            limit_per_source=self.per_source.value())
+            limit_per_source=self.per_source.value(),
+            max_post_age_days=self.max_age.value())
         # Snapshot UI values before crossing into the worker thread.
         profile = self.ctx.profile
         threshold = self.min_match.value()

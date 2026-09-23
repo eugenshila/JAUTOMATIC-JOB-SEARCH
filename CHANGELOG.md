@@ -28,6 +28,12 @@ this project follows [SemVer](https://semver.org/).
   parsing reads SAR, QAR, KWD, OMR, BHD and more.
 - Added a **Gulf logistics** preset next to Africa + UAE logistics, selecting
   every key-free Gulf-capable source at once.
+- Added a **posting-freshness limit** (default: posted within the last 5 days,
+  adjustable in Settings / search options, 0 = any age). Older postings are
+  hidden, as are postings whose date the board does not disclose; auto-refresh
+  and autopilot use the same limit.
+- Confirmed de-duplication: the same posting returned by several boards is kept
+  once (identity is the posting's link).
 - The v2 default source selection expands automatically; custom selections are
   preserved.
 

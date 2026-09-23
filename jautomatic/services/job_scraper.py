@@ -341,6 +341,10 @@ class SearchQuery:
     sources: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
     include_sample: bool = False
+    #: Postings older than this are dropped after the fetch (0 = any age).
+    #: Boards rarely agree on clock or timezone, so the comparison uses whole
+    #: days and the limit is inclusive: "5" keeps a posting from 5 days ago.
+    max_post_age_days: int = 0
 
     @property
     def terms(self) -> list[str]:
@@ -1270,10 +1274,19 @@ class JobScraper:
 
         terms = query.terms
         excluded = [k.lower() for k in (query.exclude_keywords or [])]
+        max_age = max(0, int(query.max_post_age_days or 0))
         kept: list[JobPosting] = []
         strict_hits = 0
         dropped = 0
         for job in unique:
+            if max_age:
+                age = job.age_days
+                # A freshness cap is a promise: without a readable posting date the
+                # age cannot be confirmed, so the posting is hidden rather than
+                # guessed to be fresh.
+                if age is None or age > max_age:
+                    dropped += 1
+                    continue
             haystack = job.searchable_text().lower()
             if terms:
                 strict = query_matches(haystack, terms)

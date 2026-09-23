@@ -26,7 +26,8 @@ achievement bullets), education, target titles/locations, salary floor, remote-o
 relocation switches, plus letter tone/greeting/signature. Ships with a realistic example
 profile to explore the app before filling in your own data.
 
-**Job search** — query + location + remote/min-salary filters, per-source result limits,
+**Job search** — query + location + remote/min-salary filters, a posting-freshness window
+(default: posted within the last 5 days, adjustable or switch off), per-source result limits,
 exclude keywords. Results are de-duplicated across boards, ranked by match score and shown
 with the reasons behind each score ("pay band clears your floor", "title matches your target
 role", …). One click generates the whole application pack.
@@ -75,7 +76,7 @@ band, and questions to ask them. Answers are stored per question, starred questi
 up, you can add your own, regenerating never overwrites what you wrote, and the sheet
 exports to Markdown/Word next to your CV.
 
-**Settings** — enable/disable sources, company career boards, Adzuna and Jooble keys, search defaults, document
+**Settings** — enable/disable sources, company career boards, Adzuna and Jooble keys, the posting-age limit, search defaults, document
 options (template, format, letter/e-mail toggles, custom-template helpers), autopilot
 thresholds, follow-up window, dark/light theme, and data tools (open folder, backup, CSV
 export, calendar export, clear cache).
@@ -224,7 +225,10 @@ Existing saved theme preferences are preserved; change them in **Settings → Ap
 | Demo data | no | offline sample postings so the app is always usable |
 
 Sources are queried in parallel; a failing board is reported in the results line ("issues:
-Remotive: timed out") and never blocks the others. If *no* board can be reached, the app
+Remotive: timed out") and never blocks the others. Results are de-duplicated by their
+posting link, so the same vacancy returned by several boards appears once. A freshness
+limit (default 5 days, Settings or the search options) hides older postings — and any
+posting whose date the board does not disclose, because its age cannot be confirmed. If *no* board can be reached, the app
 offers clearly-labelled demo postings so the workflow can still be explored.
 
 For regional logistics vacancies, click **Gulf logistics** or **Africa + UAE logistics**,
