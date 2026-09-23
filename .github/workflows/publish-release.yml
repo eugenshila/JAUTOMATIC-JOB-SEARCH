@@ -1,0 +1,109 @@
+# Publish a GitHub Release from an already-verified Windows MSI.
+#
+# The sandbox that authors this repo cannot download Actions artefacts (Azure
+# blob TLS is blocked), so the MSI is attached here, on a GitHub runner,
+# from a green windows-installer run. Dispatch after that run succeeds:
+#
+#   gh workflow run publish-release.yml -f run_id=<windows-installer run id>
+#
+# Empty run_id uses the latest successful windows-installer run on main.
+# Empty tag uses v{jautomatic.__version__}. The tag is created on the commit
+# that produced the MSI.
+name: publish-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "windows-installer run that produced the MSI (empty = latest successful on main)"
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: "Release tag (empty = v{version from the repo})"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve installer run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ inputs.run_id }}"
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list --repo "${{ github.repository }}" \
+              --workflow windows-installer.yml --branch main --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful windows-installer run found on main." >&2
+            exit 1
+          fi
+          META=$(gh run view "$RUN_ID" --repo "${{ github.repository }}" \
+            --json conclusion,headSha,url,headBranch,displayTitle)
+          echo "$META"
+          CONCLUSION=$(echo "$META" | python3 -c "import json,sys; print(json.load(sys.stdin)['conclusion'])")
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "Installer run $RUN_ID did not succeed ($CONCLUSION)." >&2
+            exit 1
+          fi
+          SHA=$(echo "$META" | python3 -c "import json,sys; print(json.load(sys.stdin)['headSha'])")
+          URL=$(echo "$META" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])")
+          echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Download MSI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${{ steps.run.outputs.id }}" --repo "${{ github.repository }}" \
+            -n JAUTOMATIC-Setup-x64 -D dist
+          ls -la dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "from jautomatic import __version__; print(__version__)")
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="v$VERSION"; fi
+          MSI=$(python3 packaging/build_info.py MSI_FILENAME)
+          if [ ! -f "dist/$MSI" ]; then
+            echo "Expected dist/$MSI from the installer run; found:" >&2
+            ls -la dist >&2
+            exit 1
+          fi
+          python3 tools/release_notes.py --version "$VERSION" --msi "dist/$MSI" \
+            --run-url "${{ steps.run.outputs.url }}" --out release-notes.md
+          gh release create "$TAG" "dist/$MSI" \
+            --repo "${{ github.repository }}" \
+            --title "JAUTOMATIC JOB SEARCH $VERSION" \
+            --notes-file release-notes.md \
+            --target "${{ steps.run.outputs.sha }}" \
+            --latest

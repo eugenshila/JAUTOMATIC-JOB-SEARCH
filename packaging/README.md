@@ -148,6 +148,13 @@ happen **only** here and on a dev's Windows box — the Linux sandbox this repo
 is often edited from cannot run either, so treat a red `windows-installer`
 run as the installer test suite failing and fix it before merging.
 
+Publishing a GitHub Release is a separate, manual workflow
+(`.github/workflows/publish-release.yml`): it downloads the MSI from a green
+`windows-installer` run and attaches it to `v<version>`. That download has to
+happen on a GitHub runner — Azure blob storage for Actions artefacts is not
+reachable from every authoring environment. See
+[`docs/release-guide.md`](../docs/release-guide.md).
+
 ## Troubleshooting
 
 * `WiX pin mismatch` — `build_info.WIX_VERSION` and `.config/dotnet-tools.json`

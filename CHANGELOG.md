@@ -165,4 +165,5 @@ this project follows [SemVer](https://semver.org/).
   search finished (the summary previously stuck at “Contacting job boards…”).
 
 [Unreleased]: https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH
+[1.10.0]: https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH/releases/tag/v1.10.0
 [1.4.0]: https://github.com/eugenshila/JAUTOMATIC-JOB-SEARCH/releases/tag/v1.4.0

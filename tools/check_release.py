@@ -62,6 +62,18 @@ def check_version_consistency() -> list[str]:
     if msi_file not in install_doc and f"JAUTOMATIC-Setup-{msi_ver}-x64.msi" not in install_doc:
         issues.append(f"docs/install-windows.md does not reference {msi_file}")
 
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    if f"## [{app_ver}]" not in changelog:
+        issues.append(f"CHANGELOG.md has no '## [{app_ver}]' section")
+
+    publish = ROOT / ".github" / "workflows" / "publish-release.yml"
+    if not publish.is_file():
+        issues.append("publish-release.yml is missing")
+    else:
+        body = publish.read_text(encoding="utf-8")
+        if "gh release create" not in body or "JAUTOMATIC-Setup-x64" not in body:
+            issues.append("publish-release.yml does not attach the windows-installer MSI")
+
     return issues
 
 
